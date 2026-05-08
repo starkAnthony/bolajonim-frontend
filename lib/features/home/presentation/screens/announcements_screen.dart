@@ -1,0 +1,526 @@
+import 'package:flutter/material.dart';
+import '/../../core/theme/app_colors.dart';
+import '/../../core/theme/app_text_styles.dart';
+import '../../data/mock_announcement_data.dart';
+
+class AnnouncementsScreen extends StatelessWidget {
+  const AnnouncementsScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final announcements = dummyAnnouncements;
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.background,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: const Text(
+          'E’lonlar',
+          style: TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: AppColors.textPrimary),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            const _AnnouncementHeaderCard(
+              childName: 'SALIH (Sali)',
+              groupName: 'Kichik guruh',
+            ),
+            const SizedBox(height: 12),
+            _AnnouncementSummaryCard(
+              totalCount: announcements.length,
+              unreadCount: announcements.where((e) => !e.isRead).length,
+              importantCount: announcements.where((e) => e.isImportant).length,
+            ),
+            const SizedBox(height: 12),
+            ...announcements.map(
+              (announcement) => Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: _AnnouncementListCard(
+                  item: announcement,
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            AnnouncementDetailScreen(item: announcement),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AnnouncementHeaderCard extends StatelessWidget {
+  final String childName;
+  final String groupName;
+
+  const _AnnouncementHeaderCard({
+    required this.childName,
+    required this.groupName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        children: [
+          const CircleAvatar(
+            radius: 28,
+            backgroundColor: Color(0xFFEFF9F6),
+            child: Icon(
+              Icons.campaign_outlined,
+              size: 28,
+              color: AppColors.primary,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(childName, style: AppTextStyles.titleLarge),
+                const SizedBox(height: 4),
+                Text(groupName, style: AppTextStyles.bodySmall),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AnnouncementSummaryCard extends StatelessWidget {
+  final int totalCount;
+  final int unreadCount;
+  final int importantCount;
+
+  const _AnnouncementSummaryCard({
+    required this.totalCount,
+    required this.unreadCount,
+    required this.importantCount,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF9F6),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: _SummaryItem(label: 'Jami', value: '$totalCount'),
+          ),
+          const _SummaryDivider(),
+          Expanded(
+            child: _SummaryItem(label: 'O‘qilmagan', value: '$unreadCount'),
+          ),
+          const _SummaryDivider(),
+          Expanded(
+            child: _SummaryItem(label: 'Muhim', value: '$importantCount'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SummaryItem extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _SummaryItem({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          value,
+          style: const TextStyle(
+            fontSize: 20,
+            fontWeight: FontWeight.w700,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: AppTextStyles.bodySmall,
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+}
+
+class _SummaryDivider extends StatelessWidget {
+  const _SummaryDivider();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(width: 1, height: 42, color: const Color(0xFFDDE7E4));
+  }
+}
+
+class _AnnouncementListCard extends StatelessWidget {
+  final AnnouncementItem item;
+  final VoidCallback onTap;
+
+  const _AnnouncementListCard({required this.item, required this.onTap});
+
+  String _dateLabel(DateTime date) {
+    const months = [
+      '',
+      'yanvar',
+      'fevral',
+      'mart',
+      'aprel',
+      'may',
+      'iyun',
+      'iyul',
+      'avgust',
+      'sentabr',
+      'oktabr',
+      'noyabr',
+      'dekabr',
+    ];
+
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '${date.day}-${months[date.month]}, ${date.year} • $hour:$minute';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(22),
+      child: Ink(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(22),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _AnnouncementLeading(
+              isImportant: item.isImportant,
+              isRead: item.isRead,
+              type: item.type,
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          item.title,
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: item.isRead
+                                ? FontWeight.w600
+                                : FontWeight.w700,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      if (!item.isRead)
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: const BoxDecoration(
+                            color: AppColors.primary,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    _dateLabel(item.createdAt),
+                    style: AppTextStyles.bodySmall,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    item.preview,
+                    style: AppTextStyles.bodyMedium,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  if (item.isImportant) ...[
+                    const SizedBox(height: 10),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF3E6),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Text(
+                        'Muhim e’lon',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFF2A93B),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            const Icon(
+              Icons.arrow_forward_ios_rounded,
+              size: 16,
+              color: AppColors.textSecondary,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _AnnouncementLeading extends StatelessWidget {
+  final bool isImportant;
+  final bool isRead;
+  final String type;
+
+  const _AnnouncementLeading({
+    required this.isImportant,
+    required this.isRead,
+    required this.type,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isEvent = type == 'event';
+
+    final bgColor = isEvent
+        ? const Color(0xFFEDF4FF)
+        : isImportant
+        ? const Color(0xFFFFF3E6)
+        : const Color(0xFFEFF9F6);
+
+    final iconColor = isEvent
+        ? const Color(0xFF4A90E2)
+        : isImportant
+        ? const Color(0xFFF2A93B)
+        : AppColors.primary;
+
+    final icon = isEvent
+        ? Icons.event_available_rounded
+        : isImportant
+        ? Icons.push_pin_outlined
+        : Icons.campaign_outlined;
+
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: Icon(icon, color: iconColor),
+    );
+  }
+}
+
+class AnnouncementDetailScreen extends StatelessWidget {
+  final AnnouncementItem item;
+
+  const AnnouncementDetailScreen({super.key, required this.item});
+
+  String _dateLabel(DateTime date) {
+    const months = [
+      '',
+      'yanvar',
+      'fevral',
+      'mart',
+      'aprel',
+      'may',
+      'iyun',
+      'iyul',
+      'avgust',
+      'sentabr',
+      'oktabr',
+      'noyabr',
+      'dekabr',
+    ];
+
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '${date.day}-${months[date.month]}, ${date.year} • $hour:$minute';
+  }
+
+  String _eventDateLabel(DateTime date) {
+    const months = [
+      '',
+      'yanvar',
+      'fevral',
+      'mart',
+      'aprel',
+      'may',
+      'iyun',
+      'iyul',
+      'avgust',
+      'sentabr',
+      'oktabr',
+      'noyabr',
+      'dekabr',
+    ];
+
+    final hour = date.hour.toString().padLeft(2, '0');
+    final minute = date.minute.toString().padLeft(2, '0');
+    return '${date.day}-${months[date.month]}, ${date.year} • $hour:$minute';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isEvent = item.type == 'event';
+
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      appBar: AppBar(
+        backgroundColor: AppColors.background,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: Text(
+          isEvent ? 'Tadbir tafsiloti' : 'E’lon tafsiloti',
+          style: const TextStyle(
+            color: AppColors.textPrimary,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        iconTheme: const IconThemeData(color: AppColors.textPrimary),
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+          children: [
+            Container(
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if ((item.imagePath ?? '').trim().isNotEmpty)
+                    ClipRRect(
+                      borderRadius: const BorderRadius.vertical(
+                        top: Radius.circular(24),
+                      ),
+                      child: AspectRatio(
+                        aspectRatio: 1.8,
+                        child: Image.asset(
+                          item.imagePath!,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) {
+                            return Container(
+                              color: const Color(0xFFF4F7FA),
+                              alignment: Alignment.center,
+                              child: const Icon(
+                                Icons.image_not_supported_outlined,
+                                size: 42,
+                                color: AppColors.textSecondary,
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (item.isImportant)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF3E6),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: const Text(
+                              'Muhim e’lon',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFFF2A93B),
+                              ),
+                            ),
+                          ),
+                        if (isEvent && item.eventDate != null)
+                          Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 8,
+                            ),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEDF4FF),
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                            child: Text(
+                              'Tadbir sanasi: ${_eventDateLabel(item.eventDate!)}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF4A90E2),
+                              ),
+                            ),
+                          ),
+                        Text(item.title, style: AppTextStyles.headlineMedium),
+                        const SizedBox(height: 8),
+                        Text(
+                          _dateLabel(item.createdAt),
+                          style: AppTextStyles.bodySmall,
+                        ),
+                        const SizedBox(height: 18),
+                        Text(item.content, style: AppTextStyles.bodyMedium),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
