@@ -38,8 +38,7 @@ function Start-CloudflareTunnel {
     [string]$Label
   )
 
-  $logFile = Join-Path $env:TEMP "bolajonim-tunnel-$Label.log"
-  if (Test-Path $logFile) { Remove-Item $logFile -Force }
+  $logFile = Join-Path $env:TEMP "bolajonim-tunnel-$Label-$(Get-Date -Format 'yyyyMMddHHmmss').log"
 
   Write-Host "Starting Cloudflare tunnel for $Label (localhost:$Port)..." -ForegroundColor Cyan
 
@@ -99,7 +98,9 @@ Write-Host ""
 Write-Host "Starting Flutter web on port $WebPort (API -> $apiPublicUrl)..." -ForegroundColor Cyan
 
 $flutterLog = Join-Path $env:TEMP "bolajonim-flutter-web.log"
+$flutterErrLog = Join-Path $env:TEMP "bolajonim-flutter-web-err.log"
 if (Test-Path $flutterLog) { Remove-Item $flutterLog -Force }
+if (Test-Path $flutterErrLog) { Remove-Item $flutterErrLog -Force }
 
 $flutterProc = Start-Process -FilePath "flutter" `
   -ArgumentList @(
@@ -110,7 +111,7 @@ $flutterProc = Start-Process -FilePath "flutter" `
   ) `
   -WorkingDirectory $root `
   -RedirectStandardOutput $flutterLog `
-  -RedirectStandardError $flutterLog `
+  -RedirectStandardError $flutterErrLog `
   -PassThru `
   -WindowStyle Hidden
 
