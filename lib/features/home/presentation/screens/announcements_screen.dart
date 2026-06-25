@@ -1,15 +1,58 @@
 import 'package:flutter/material.dart';
+
+import '/../../core/models/announcement_item.dart';
+import '/../../core/models/announcement_model.dart';
+import '/../../core/models/child_model.dart';
+import '/../../core/services/api_client.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
-import '../../data/mock_announcement_data.dart';
 
-class AnnouncementsScreen extends StatelessWidget {
-  const AnnouncementsScreen({super.key});
+class AnnouncementsScreen extends StatefulWidget {
+  final String? childNo;
+
+  const AnnouncementsScreen({super.key, this.childNo});
+
+  @override
+  State<AnnouncementsScreen> createState() => _AnnouncementsScreenState();
+}
+
+class _AnnouncementsScreenState extends State<AnnouncementsScreen> {
+  late Future<_AnnouncementsData> _dataFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _dataFuture = _loadData();
+  }
+
+  Future<_AnnouncementsData> _loadData() async {
+    final children = await BolajonimApi.getChildren();
+    if (children.isEmpty) {
+      throw ApiException('Farzand topilmadi.');
+    }
+
+    final selectedChildNo = widget.childNo ??
+        await SelectedChildService.resolveSelection(children);
+
+    final child = children.firstWhere(
+      (item) => item.childNo == selectedChildNo,
+      orElse: () => children.first,
+    );
+
+    final announcements = await BolajonimApi.getAnnouncements(
+      childNo: child.childNo,
+    );
+
+    return _AnnouncementsData(
+      child: child,
+      announcements: announcements,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final announcements = dummyAnnouncements;
-
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -26,42 +69,95 @@ class AnnouncementsScreen extends StatelessWidget {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            const _AnnouncementHeaderCard(
-              childName: 'SALIH (Sali)',
-              groupName: 'Kichik guruh',
-            ),
-            const SizedBox(height: 12),
-            _AnnouncementSummaryCard(
-              totalCount: announcements.length,
-              unreadCount: announcements.where((e) => !e.isRead).length,
-              importantCount: announcements.where((e) => e.isImportant).length,
-            ),
-            const SizedBox(height: 12),
-            ...announcements.map(
-              (announcement) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _AnnouncementListCard(
-                  item: announcement,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            AnnouncementDetailScreen(item: announcement),
-                      ),
-                    );
-                  },
+        child: FutureBuilder<_AnnouncementsData>(
+          future: _dataFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'E’lonlarni yuklab bo‘lmadi.\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                  ),
                 ),
-              ),
-            ),
-          ],
+              );
+            }
+
+            final data = snapshot.data!;
+            final announcements = data.announcements
+                .map(AnnouncementItem.fromModel)
+                .toList();
+
+            if (announcements.isEmpty) {
+              return ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  _AnnouncementHeaderCard(
+                    childName: data.child.childName,
+                    groupName: data.child.groupName ?? '-',
+                  ),
+                  const SizedBox(height: 24),
+                  const Center(
+                    child: Text('Hozircha e’lonlar yo‘q.'),
+                  ),
+                ],
+              );
+            }
+
+            return ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              children: [
+                _AnnouncementHeaderCard(
+                  childName: data.child.childName,
+                  groupName: data.child.groupName ?? '-',
+                ),
+                const SizedBox(height: 12),
+                _AnnouncementSummaryCard(
+                  totalCount: announcements.length,
+                  unreadCount: 0,
+                  importantCount:
+                      announcements.where((e) => e.isImportant).length,
+                ),
+                const SizedBox(height: 12),
+                ...announcements.map(
+                  (announcement) => Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: _AnnouncementListCard(
+                      item: announcement,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                AnnouncementDetailScreen(item: announcement),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
         ),
       ),
     );
   }
+}
+
+class _AnnouncementsData {
+  final ChildModel child;
+  final List<AnnouncementModel> announcements;
+
+  const _AnnouncementsData({
+    required this.child,
+    required this.announcements,
+  });
 }
 
 class _AnnouncementHeaderCard extends StatelessWidget {

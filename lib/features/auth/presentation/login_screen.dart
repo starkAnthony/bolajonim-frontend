@@ -1,91 +1,203 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:http/http.dart' as http;
+
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/bolajonim_api.dart';
+import '../../../core/services/session_service.dart';
+import '../../../core/models/country_phone_code.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utils/phone_utils.dart';
+import '../../../core/widgets/animated_segment_switcher.dart';
+import '../../../core/widgets/international_phone_field.dart';
+import '../../../core/widgets/validated_text_field.dart';
+import '../../child/child_setup_screen.dart';
 import '../../navigation/main_navigation_screen.dart';
+import '../../teacher/presentation/teacher_main_navigation_screen.dart';
+import 'forgot_password_screen.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final String? successMessage;
+
+  const LoginScreen({super.key, this.successMessage});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  static const double _fieldHeight = 64;
+  static const double _fieldRadius = 20;
+
   bool _usePhoneLogin = true;
   bool _obscurePassword = true;
   bool _isLoading = false;
+  int _shakeTrigger = 0;
+  CountryPhoneCode _selectedCountry = CountryPhoneCode.uzbekistan;
+
+  final Set<String> _fieldErrors = {};
 
   final TextEditingController _phoneController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final FocusNode _passwordFocusNode = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+
+    if (widget.successMessage != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _showSnack(widget.successMessage!);
+      });
+    }
+  }
 
   @override
   void dispose() {
     _phoneController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
+    _passwordFocusNode.dispose();
     super.dispose();
+  }
+
+  void _submitLogin([String? _]) {
+    if (!_isLoading) {
+      _login();
+    }
+  }
+
+  void _focusPasswordField([String? _]) {
+    _passwordFocusNode.requestFocus();
+  }
+
+  void _clearFieldError(String field) {
+    if (_fieldErrors.remove(field)) {
+      setState(() {});
+    }
+  }
+
+  bool _validateLoginForm() {
+    final errors = <String>{};
+    final password = _passwordController.text.trim();
+
+    if (_usePhoneLogin) {
+      final phone = _phoneController.text.trim();
+      if (phone.isEmpty || !PhoneUtils.isValidLocalNumber(_selectedCountry, phone)) {
+        errors.add('phone');
+      }
+    } else {
+      final loginValue = _emailController.text.trim();
+      if (loginValue.isEmpty) {
+        errors.add('email');
+      }
+    }
+
+    if (password.isEmpty) {
+      errors.add('password');
+    }
+
+    setState(() {
+      _fieldErrors
+        ..clear()
+        ..addAll(errors);
+      if (errors.isNotEmpty) _shakeTrigger++;
+    });
+
+    if (errors.isNotEmpty) {
+      _showSnack('Iltimos, qizil belgilangan maydonlarni to‘ldiring.');
+      return false;
+    }
+
+    return true;
   }
 
   Future<void> _login() async {
     FocusScope.of(context).unfocus();
 
+    if (!_validateLoginForm()) return;
+
     final loginValue = _usePhoneLogin
-        ? _phoneController.text.replaceAll('-', '').trim()
+        ? PhoneUtils.toInternational(_selectedCountry, _phoneController.text)
         : _emailController.text.trim();
 
     final password = _passwordController.text.trim();
-
-    if (_usePhoneLogin) {
-      if (loginValue.isEmpty || loginValue.length != 9) {
-        _showSnack('Telefon raqamni to\'liq kiriting');
-        return;
-      }
-    } else {
-      if (loginValue.isEmpty) {
-        _showSnack('Email kiriting');
-        return;
-      }
-    }
-
-    if (password.isEmpty) {
-      _showSnack('Parolni kiriting');
-      return;
-    }
+    final loginType = _usePhoneLogin
+        ? 'PHONE'
+        : (loginValue.contains('@') ? 'EMAIL' : 'USER_ID');
 
     setState(() => _isLoading = true);
 
     try {
-      // await AuthService.login(userId: loginValue, password: password);
+      final userId = await BolajonimApi.resolveLoginId(
+        loginValue: loginValue,
+        loginType: loginType,
+      );
 
-      // if (!mounted) return;
+      final loginResult = await AuthService.login(
+        userId: userId,
+        password: password,
+      );
 
-      // Navigator.pushAndRemoveUntil(
-      //   context,
-      //   MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
-      //   (route) => false,
-      // );
-      // 🔥 TEMPORARY: skip backend
-      await Future.delayed(const Duration(seconds: 1));
+      if (!mounted) return;
+
+      final result = loginResult['result'] as Map<String, dynamic>?;
+      await SessionService.saveRole(result?['rofcCd']?.toString());
+      final role = await SessionService.getRole();
+
+      if (!mounted) return;
+
+      if (role == UserRole.parent) {
+        var children = <dynamic>[];
+        try {
+          children = await BolajonimApi.getChildren();
+        } catch (_) {
+          // New parent or profile API not ready yet — still go to child setup.
+        }
+
+        if (!mounted) return;
+
+        if (children.isEmpty) {
+          final inviteCode = await SessionService.consumePendingInviteCode();
+          if (!mounted) return;
+          Navigator.pushAndRemoveUntil(
+            context,
+            MaterialPageRoute(
+              builder: (_) => ChildSetupScreen(
+                initialInviteCode: inviteCode,
+              ),
+            ),
+            (route) => false,
+          );
+          return;
+        }
+      }
+
+      final Widget destination = switch (role) {
+        UserRole.teacher => const TeacherMainNavigationScreen(),
+        UserRole.director =>
+          const TeacherMainNavigationScreen(isDirector: true),
+        _ => const MainNavigationScreen(),
+      };
 
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+        MaterialPageRoute(builder: (_) => destination),
         (route) => false,
       );
     } on AuthException catch (e) {
       if (!mounted) return;
       _handleAuthError(e);
-    } on http.ClientException {
-      if (!mounted) return;
-      _showSnack('Serverga ulanib bo\'lmadi.');
     } catch (e) {
       if (!mounted) return;
-      _showSnack('Xato: ${e.toString()}');
+      final message = e.toString();
+      if (message.contains('User not found')) {
+        _showSnack(
+          'Foydalanuvchi topilmadi. Avval ro\'yxatdan o\'ting yoki ma\'lumotlarni tekshiring.',
+        );
+      } else {
+        _showSnack('Xato: $message');
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -106,7 +218,7 @@ class _LoginScreenState extends State<LoginScreen> {
     const messages = {
       'OVER_FAIL_COUNT':
           'Kirish urinishlari soni oshib ketdi. Administratorga murojaat qiling.',
-      'INVALID_USER_INFO': 'Login yoki parol noto\'g\'ri.',
+      'INVALID_USER_INFO': 'Telefon, ID, email yoki parol noto\'g\'ri.',
       'LONG_TERM_NO_LOGIN_USER': 'Uzoq vaqt kirish amalga oshirilmagan.',
       'USER_RESIGNED': 'Bu hisob faol emas.',
       'PWD_CHANGE_NECESSITY': 'Parolni yangilash zarur.',
@@ -121,7 +233,6 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
       resizeToAvoidBottomInset: true,
@@ -132,86 +243,98 @@ class _LoginScreenState extends State<LoginScreen> {
           child: SingleChildScrollView(
             keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: EdgeInsets.fromLTRB(24, 20, 24, 24 + bottomInset),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minHeight:
-                    screenHeight -
-                    MediaQuery.of(context).padding.top -
-                    MediaQuery.of(context).padding.bottom -
-                    44,
-              ),
-              child: IntrinsicHeight(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildBackButton(),
-                    const SizedBox(height: 28),
-                    const Text(
-                      'Xush kelibsiz',
-                      style: AppTextStyles.headlineLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    const Text(
-                      'Sahifangizga kiring',
-                      style: AppTextStyles.bodyMedium,
-                    ),
-                    const SizedBox(height: 28),
-                    _buildLoginTypeSwitcher(),
-                    const SizedBox(height: 28),
-                    if (_usePhoneLogin) ...[
-                      const Text(
-                        'Telefon raqam',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _buildPhoneField(),
-                    ] else ...[
-                      const Text(
-                        'Email',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.black87,
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _buildEmailField(),
-                    ],
-                    const SizedBox(height: 24),
-                    const Text(
-                      'Parol',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.black87,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    _buildPasswordField(),
-                    const SizedBox(height: 28),
-                    _buildLoginButton(),
-                    const SizedBox(height: 14),
-                    Center(
-                      child: TextButton(
-                        onPressed: () {},
-                        child: const Text(
-                          'Parolni unutdingizmi?',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w600,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ),
-                    const Spacer(),
-                  ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildBackButton(),
+                const SizedBox(height: 28),
+                const Text(
+                  'Xush kelibsiz',
+                  style: AppTextStyles.headlineLarge,
                 ),
-              ),
+                const SizedBox(height: 8),
+                const Text(
+                  'Sahifangizga kiring',
+                  style: AppTextStyles.bodyMedium,
+                ),
+                const SizedBox(height: 28),
+                _buildLoginTypeSwitcher(),
+                const SizedBox(height: 28),
+                AnimatedSize(
+                  duration: const Duration(milliseconds: 320),
+                  curve: Curves.easeInOutCubic,
+                  alignment: Alignment.topCenter,
+                  clipBehavior: Clip.none,
+                  child: SegmentContentTransition(
+                    child: _usePhoneLogin
+                        ? _buildPhoneLoginFields(key: const ValueKey('phone'))
+                        : _buildEmailLoginFields(key: const ValueKey('email')),
+                  ),
+                ),
+                const SizedBox(height: 24),
+                const Text(
+                  'Parol',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.black87,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ValidatedTextField(
+                  controller: _passwordController,
+                  focusNode: _passwordFocusNode,
+                  hint: 'Parolingizni kiriting',
+                  obscureText: _obscurePassword,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: _submitLogin,
+                  hasError: _fieldErrors.contains('password'),
+                  shakeTrigger: _shakeTrigger,
+                  errorText: _fieldErrors.contains('password')
+                      ? 'Parolni kiriting'
+                      : null,
+                  enabled: !_isLoading,
+                  onChanged: () => _clearFieldError('password'),
+                  borderRadius: _fieldRadius,
+                  height: _fieldHeight,
+                  suffix: IconButton(
+                    onPressed: () {
+                      setState(() => _obscurePassword = !_obscurePassword);
+                    },
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_off_rounded
+                          : Icons.visibility_rounded,
+                      color: Colors.grey.shade700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 28),
+                _buildLoginButton(),
+                const SizedBox(height: 14),
+                Center(
+                  child: TextButton(
+                    onPressed: _isLoading
+                        ? null
+                        : () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => const ForgotPasswordScreen(),
+                              ),
+                            );
+                          },
+                    child: const Text(
+                      'Parolni unutdingizmi?',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
             ),
           ),
         ),
@@ -237,232 +360,88 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildLoginTypeSwitcher() {
-    return Container(
-      padding: const EdgeInsets.all(6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.75),
-        borderRadius: BorderRadius.circular(22),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                if (!_usePhoneLogin) setState(() => _usePhoneLogin = true);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOut,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  color: _usePhoneLogin
-                      ? AppColors.primary
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  'Telefon',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: _usePhoneLogin ? Colors.white : Colors.black87,
-                  ),
-                ),
-              ),
-            ),
-          ),
-          Expanded(
-            child: GestureDetector(
-              onTap: () {
-                if (_usePhoneLogin) setState(() => _usePhoneLogin = false);
-              },
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 220),
-                curve: Curves.easeOut,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-                decoration: BoxDecoration(
-                  color: !_usePhoneLogin
-                      ? AppColors.primary
-                      : Colors.transparent,
-                  borderRadius: BorderRadius.circular(18),
-                ),
-                alignment: Alignment.center,
-                child: Text(
-                  'Email',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w700,
-                    color: !_usePhoneLogin ? Colors.white : Colors.black87,
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
+    return AnimatedSegmentSwitcher(
+      selectedIndex: _usePhoneLogin ? 0 : 1,
+      labels: const ['Telefon', 'Email'],
+      onChanged: (index) {
+        setState(() {
+          _usePhoneLogin = index == 0;
+          _fieldErrors.clear();
+        });
+      },
     );
   }
 
-  Widget _buildPhoneField() {
-    const borderRadius = 20.0;
-    return Row(
+  Widget _buildPhoneLoginFields({required Key key}) {
+    return Column(
+      key: key,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Container(
-          height: 64,
-          padding: const EdgeInsets.symmetric(horizontal: 18),
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white.withOpacity(0.78),
-            borderRadius: BorderRadius.circular(borderRadius),
-            border: Border.all(
-              color: AppColors.primary.withOpacity(0.7),
-              width: 1.5,
-            ),
-          ),
-          child: const Text(
-            '+998',
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w700,
-              color: Colors.black87,
-            ),
+        const Text(
+          'Telefon raqam',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+            height: 1.2,
           ),
         ),
-        const SizedBox(width: 10),
-        Expanded(
-          child: SizedBox(
-            height: 64,
-            child: TextFormField(
-              controller: _phoneController,
-              keyboardType: TextInputType.phone,
-              inputFormatters: [
-                FilteringTextInputFormatter.digitsOnly,
-                UzbekPhoneNumberFormatter(),
-              ],
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: Colors.black87,
-              ),
-              decoration: InputDecoration(
-                hintText: '90-123-45-67',
-                hintStyle: TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                  color: Colors.grey.shade500,
-                ),
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 20,
-                  vertical: 20,
-                ),
-                filled: true,
-                fillColor: Colors.white.withOpacity(0.65),
-                enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(borderRadius),
-                  borderSide: BorderSide(
-                    color: AppColors.primary.withOpacity(0.7),
-                    width: 1.5,
-                  ),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(borderRadius),
-                  borderSide: const BorderSide(
-                    color: AppColors.primary,
-                    width: 1.8,
-                  ),
-                ),
-              ),
-            ),
-          ),
+        const SizedBox(height: 12),
+        InternationalPhoneField(
+          controller: _phoneController,
+          selectedCountry: _selectedCountry,
+          onCountryChanged: (country) {
+            setState(() => _selectedCountry = country);
+            _clearFieldError('phone');
+          },
+          hasError: _fieldErrors.contains('phone'),
+          shakeTrigger: _shakeTrigger,
+          errorText: _fieldErrors.contains('phone')
+              ? 'Telefon raqamni to‘liq kiriting'
+              : null,
+          enabled: !_isLoading,
+          onChanged: () => _clearFieldError('phone'),
+          borderRadius: _fieldRadius,
+          height: _fieldHeight,
+          textInputAction: TextInputAction.next,
+          onSubmitted: _focusPasswordField,
         ),
       ],
     );
   }
 
-  Widget _buildEmailField() {
-    return TextFormField(
-      controller: _emailController,
-      keyboardType: TextInputType.emailAddress,
-      style: const TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.w500,
-        color: Colors.black87,
-      ),
-      decoration: InputDecoration(
-        hintText: 'email@example.com',
-        hintStyle: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-          color: Colors.grey.shade500,
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 20,
-        ),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.65),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(20),
-          borderSide: BorderSide(
-            color: AppColors.primary.withOpacity(0.7),
-            width: 1.5,
+  Widget _buildEmailLoginFields({required Key key}) {
+    return Column(
+      key: key,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'Email yoki ID',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+            color: Colors.black87,
+            height: 1.2,
           ),
         ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(20),
-          borderSide: const BorderSide(color: AppColors.primary, width: 1.8),
+        const SizedBox(height: 12),
+        ValidatedTextField(
+          controller: _emailController,
+          hint: 'email@example.com yoki login ID',
+          keyboardType: TextInputType.emailAddress,
+          hasError: _fieldErrors.contains('email'),
+          shakeTrigger: _shakeTrigger,
+          errorText: _fieldErrors.contains('email')
+              ? 'Email yoki login ID kiriting'
+              : null,
+          enabled: !_isLoading,
+          onChanged: () => _clearFieldError('email'),
+          borderRadius: _fieldRadius,
+          height: _fieldHeight,
+          textInputAction: TextInputAction.next,
+          onSubmitted: _focusPasswordField,
         ),
-      ),
-    );
-  }
-
-  Widget _buildPasswordField() {
-    return TextFormField(
-      controller: _passwordController,
-      obscureText: _obscurePassword,
-      style: const TextStyle(
-        fontSize: 16,
-        fontWeight: FontWeight.w500,
-        color: Colors.black87,
-      ),
-      decoration: InputDecoration(
-        hintText: 'Parolingizni kiriting',
-        hintStyle: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-          color: Colors.grey.shade500,
-        ),
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 20,
-          vertical: 20,
-        ),
-        filled: true,
-        fillColor: Colors.white.withOpacity(0.65),
-        suffixIcon: IconButton(
-          onPressed: () {
-            setState(() => _obscurePassword = !_obscurePassword);
-          },
-          icon: Icon(
-            _obscurePassword
-                ? Icons.visibility_off_rounded
-                : Icons.visibility_rounded,
-            color: Colors.grey.shade700,
-          ),
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(20),
-          borderSide: BorderSide(
-            color: AppColors.primary.withOpacity(0.7),
-            width: 1.5,
-          ),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(20),
-          borderSide: const BorderSide(color: AppColors.primary, width: 1.8),
-        ),
-      ),
+      ],
     );
   }
 
@@ -496,36 +475,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700),
               ),
       ),
-    );
-  }
-}
-
-class UzbekPhoneNumberFormatter extends TextInputFormatter {
-  @override
-  TextEditingValue formatEditUpdate(
-    TextEditingValue oldValue,
-    TextEditingValue newValue,
-  ) {
-    String digits = newValue.text.replaceAll(RegExp(r'[^0-9]'), '');
-
-    if (digits.length > 9) digits = digits.substring(0, 9);
-
-    final buffer = StringBuffer();
-    for (int i = 0; i < digits.length; i++) {
-      buffer.write(digits[i]);
-      if (i == 1 && digits.length > 2) {
-        buffer.write('-');
-      } else if (i == 4 && digits.length > 5) {
-        buffer.write('-');
-      } else if (i == 6 && digits.length > 7) {
-        buffer.write('-');
-      }
-    }
-
-    final formatted = buffer.toString();
-    return TextEditingValue(
-      text: formatted,
-      selection: TextSelection.collapsed(offset: formatted.length),
     );
   }
 }

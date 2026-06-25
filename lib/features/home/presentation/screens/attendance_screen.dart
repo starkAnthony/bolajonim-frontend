@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
 
@@ -12,126 +14,10 @@ class AttendanceScreen extends StatefulWidget {
 class _AttendanceScreenState extends State<AttendanceScreen> {
   late DateTime _focusedMonth;
   DateTime? _selectedDate;
-
-  final Map<DateTime, AttendanceRecord> _attendanceMap = {
-    _dateOnly(DateTime(2026, 4, 1)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:41',
-      leavingTime: '17:18',
-      pickupPerson: 'Otasi',
-      note: 'Bugun ertalab yaxshi kayfiyatda keldi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 2)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:39',
-      leavingTime: '17:24',
-      pickupPerson: 'Otasi',
-      note: 'Mashg‘ulotlarda faol qatnashdi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 3)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:45',
-      leavingTime: '17:11',
-      pickupPerson: 'Onasi',
-      note: 'Rasm chizish mashg‘ulotida faol bo‘ldi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 6)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:47',
-      leavingTime: '17:09',
-      pickupPerson: 'Otasi',
-      note: 'Bugun do‘stlari bilan yaxshi o‘ynadi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 7)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:44',
-      leavingTime: '17:22',
-      pickupPerson: 'Onasi',
-      note: 'Qo‘shiq aytish faoliyatida qatnashdi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 8)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:42',
-      leavingTime: '17:19',
-      pickupPerson: 'Otasi',
-      note: 'Tarbiyachi ko‘rsatmalarini yaxshi bajardi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 9)): const AttendanceRecord(
-      status: AttendanceStatus.excused,
-      note: 'Oilaviy sabab bilan kelmadi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 10)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:40',
-      leavingTime: '17:20',
-      pickupPerson: 'Otasi',
-      note: 'Bugun ochiq havoda o‘yinlar bo‘ldi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 13)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:43',
-      leavingTime: '17:16',
-      pickupPerson: 'Onasi',
-      note: 'Yaxshi ovqatlandi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 14)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:38',
-      leavingTime: '17:28',
-      pickupPerson: 'Otasi',
-      note: 'Kun davomida faol bo‘ldi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 15)): const AttendanceRecord(
-      status: AttendanceStatus.sick,
-      note: 'Sog‘ligi sabab kelmadi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 16)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:41',
-      leavingTime: '17:13',
-      pickupPerson: 'Otasi',
-      note: 'Rangli qog‘oz bilan ishlashda qatnashdi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 17)): const AttendanceRecord(
-      status: AttendanceStatus.leftEarly,
-      arrivalTime: '08:46',
-      leavingTime: '14:10',
-      pickupPerson: 'Onasi',
-      note: 'Bugun erta olib ketildi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 20)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:43',
-      leavingTime: '17:20',
-      pickupPerson: 'Otasi',
-      note: 'Bugun mashg‘ulotlarda faol qatnashdi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 21)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:37',
-      leavingTime: '17:21',
-      pickupPerson: 'Otasi',
-      note: 'Do‘stlari bilan yaxshi muloqot qildi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 22)): const AttendanceRecord(
-      status: AttendanceStatus.absent,
-      note: 'Sababsiz kelmadi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 23)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:42',
-      leavingTime: '17:14',
-      pickupPerson: 'Onasi',
-      note: 'Bugun o‘yin vaqtida quvnoq bo‘ldi.',
-    ),
-    _dateOnly(DateTime(2026, 4, 24)): const AttendanceRecord(
-      status: AttendanceStatus.present,
-      arrivalTime: '08:40',
-      leavingTime: '17:18',
-      pickupPerson: 'Otasi',
-      note: 'Faoliyatlarda yaxshi qatnashdi.',
-    ),
-  };
+  Map<DateTime, AttendanceRecord> _attendanceMap = {};
+  bool _isLoading = true;
+  String _childName = 'Farzand';
+  String _groupName = '-';
 
   @override
   void initState() {
@@ -139,6 +25,77 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     final today = _dateOnly(DateTime.now());
     _focusedMonth = DateTime(today.year, today.month, 1);
     _selectedDate = _isFuture(today) ? null : today;
+    _loadAttendance();
+  }
+
+  Future<void> _loadAttendance() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final children = await BolajonimApi.getChildren();
+      if (children.isEmpty) {
+        setState(() {
+          _attendanceMap = {};
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final childNo = await SelectedChildService.resolveSelection(children);
+      final child = children.firstWhere(
+        (item) => item.childNo == childNo,
+        orElse: () => children.first,
+      );
+
+      final month =
+          '${_focusedMonth.year}${_focusedMonth.month.toString().padLeft(2, '0')}';
+      final records = await BolajonimApi.getAttendance(
+        childNo: child.childNo,
+        attendanceMonth: month,
+      );
+
+      final map = <DateTime, AttendanceRecord>{};
+      for (final record in records) {
+        final date = record.parsedDate;
+        if (date == null) continue;
+        map[_dateOnly(date)] = AttendanceRecord(
+          status: _mapStatus(record.status),
+          arrivalTime: record.arrivalTime,
+          leavingTime: record.leavingTime,
+          pickupPerson: record.pickupPerson,
+          note: record.note,
+        );
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _attendanceMap = map;
+        _childName = child.childName;
+        _groupName = child.groupName ?? '-';
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _attendanceMap = {};
+        _isLoading = false;
+      });
+    }
+  }
+
+  AttendanceStatus _mapStatus(String status) {
+    switch (status.toLowerCase()) {
+      case 'absent':
+        return AttendanceStatus.absent;
+      case 'sick':
+        return AttendanceStatus.sick;
+      case 'excused':
+        return AttendanceStatus.excused;
+      case 'leftearly':
+        return AttendanceStatus.leftEarly;
+      default:
+        return AttendanceStatus.present;
+    }
   }
 
   static DateTime _dateOnly(DateTime date) {
@@ -161,6 +118,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _selectedDate = null;
       }
     });
+    _loadAttendance();
   }
 
   void _goToNextMonth() {
@@ -173,6 +131,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         _selectedDate = null;
       }
     });
+    _loadAttendance();
   }
 
   void _goToToday() {
@@ -181,6 +140,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       _focusedMonth = DateTime(today.year, today.month, 1);
       _selectedDate = _isFuture(today) ? null : today;
     });
+    _loadAttendance();
   }
 
   List<DateTime> _buildCalendarDays(DateTime month) {
@@ -267,13 +227,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SafeArea(
-        child: ListView(
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
           children: [
             _ChildAttendanceHeader(
-              childName: 'SALIH (Sali)',
-              groupName: 'Kichik guruh',
-              statusText: 'Shu oyda 14 marta keldi',
+              childName: _childName,
+              groupName: _groupName,
+              statusText:
+                  'Shu oyda ${_attendanceMap.values.where((r) => r.status == AttendanceStatus.present).length} marta keldi',
             ),
             const SizedBox(height: 12),
             _MonthNavigator(

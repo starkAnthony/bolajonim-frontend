@@ -1,14 +1,31 @@
-import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import '../../../core/models/child_model.dart';
+import '../../../core/models/parent_profile_model.dart';
 import '../../../core/services/auth_service.dart';
+import '../../../core/services/bolajonim_api.dart';
+import '../../../core/services/api_client.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../features/auth/presentation/start_screen.dart';
+import '../child/child_setup_screen.dart';
+import 'app_settings_screen.dart';
+import 'edit_child_screen.dart';
+import 'edit_parent_screen.dart';
 
 class ProfileScreen extends StatefulWidget {
-  const ProfileScreen({super.key});
+  final String? selectedChildNo;
+  final ValueChanged<String>? onChildSelected;
+  final Future<void> Function(String childNo)? onChildAdded;
+
+  const ProfileScreen({
+    super.key,
+    this.selectedChildNo,
+    this.onChildSelected,
+    this.onChildAdded,
+  });
 
   @override
   State<ProfileScreen> createState() => _ProfileScreenState();
@@ -16,7 +33,137 @@ class ProfileScreen extends StatefulWidget {
 
 class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _picker = ImagePicker();
-  File? _childProfileImage;
+  Uint8List? _childProfileImageBytes;
+  String? _childPhotoUrl;
+  late Future<_ProfileData> _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileFuture = _loadProfileData();
+  }
+
+  Future<_ProfileData> _loadProfileData() async {
+    final results = await Future.wait([
+      BolajonimApi.getProfile(),
+      BolajonimApi.getChildren(),
+    ]);
+
+    return _ProfileData(
+      profile: results[0] as ParentProfileModel,
+      children: results[1] as List<ChildModel>,
+    );
+  }
+
+  ChildModel? _selectedChild(List<ChildModel> children) {
+    if (children.isEmpty) return null;
+
+    final selectedNo = widget.selectedChildNo;
+    if (selectedNo != null) {
+      for (final child in children) {
+        if (child.childNo == selectedNo) return child;
+      }
+    }
+
+    return children.first;
+  }
+
+  Future<void> _openAddChildScreen() async {
+    final newChildNo = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ChildSetupScreen(addAnotherChild: true),
+      ),
+    );
+
+    if (!mounted || newChildNo == null) return;
+
+    await widget.onChildAdded?.call(newChildNo);
+    setState(() => _profileFuture = _loadProfileData());
+  }
+
+  void _refreshProfile() {
+    setState(() {
+      _childPhotoUrl = null;
+      _childProfileImageBytes = null;
+      _profileFuture = _loadProfileData();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant ProfileScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedChildNo != widget.selectedChildNo) {
+      setState(() {
+        _childPhotoUrl = null;
+        _childProfileImageBytes = null;
+      });
+    }
+  }
+
+  Future<void> _openEditParent(
+    ParentProfileModel profile,
+    ChildModel? child,
+  ) async {
+    final updated = await Navigator.push<ParentProfileModel>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditParentScreen(
+          profile: profile,
+          selectedChild: child,
+        ),
+      ),
+    );
+
+    if (updated != null) _refreshProfile();
+  }
+
+  Future<void> _openEditChild(ChildModel child) async {
+    final updated = await Navigator.push<ChildModel>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => EditChildScreen(child: child),
+      ),
+    );
+
+    if (updated != null) _refreshProfile();
+  }
+
+  Future<void> _openSettings() async {
+    await Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const AppSettingsScreen()),
+    );
+  }
+
+  Future<void> _uploadPickedImage(String childNo, Uint8List bytes) async {
+    try {
+      final updated = await BolajonimApi.uploadChildPhoto(
+        childNo: childNo,
+        fileBytes: bytes,
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _childProfileImageBytes = null;
+        _childPhotoUrl = BolajonimApi.resolveMediaUrl(updated.photoUrl);
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profil rasmi saqlandi')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Rasm saqlanmadi: $e')),
+      );
+    }
+  }
 
   void _showPlaceholder(BuildContext context, String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
@@ -32,9 +179,13 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
       if (pickedFile == null) return;
 
-      setState(() {
-        _childProfileImage = File(pickedFile.path);
-      });
+      final bytes = await pickedFile.readAsBytes();
+      setState(() => _childProfileImageBytes = bytes);
+
+      final child = _selectedChild((await _profileFuture).children);
+      if (child != null) {
+        await _uploadPickedImage(child.childNo, bytes);
+      }
     } catch (e) {
       if (!mounted) return;
 
@@ -44,14 +195,45 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  void _deleteChildImage() {
-    setState(() {
-      _childProfileImage = null;
-    });
+  Future<void> _deleteChildImage(String childNo) async {
+    try {
+      await BolajonimApi.deleteChildPhoto(childNo: childNo);
+      if (!mounted) return;
+      setState(() {
+        _childProfileImageBytes = null;
+        _childPhotoUrl = null;
+      });
+      _refreshProfile();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Profil rasmi o‘chirildi')),
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    }
+  }
 
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Profil rasmi o‘chirildi')));
+  void _deleteChildImagePrompt(String childNo) {
+    _deleteChildImage(childNo);
+  }
+
+  bool _hasChildPhoto(ChildModel? child) {
+    final remoteUrl = BolajonimApi.resolveMediaUrl(child?.photoUrl);
+    return _childProfileImageBytes != null ||
+        (_childPhotoUrl != null && _childPhotoUrl!.isNotEmpty) ||
+        (remoteUrl != null && remoteUrl.isNotEmpty);
+  }
+
+  void _onChildImageTap(ChildModel? child) {
+    if (child == null) return;
+
+    if (!_hasChildPhoto(child)) {
+      _showAddPhotoSheet();
+    } else {
+      _showEditDeleteSheet(child.childNo);
+    }
   }
 
   Future<void> _logout() async {
@@ -205,7 +387,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _showEditDeleteSheet() {
+  void _showEditDeleteSheet(String childNo) {
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -259,7 +441,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   isDanger: true,
                   onTap: () {
                     Navigator.pop(sheetContext);
-                    _deleteChildImage();
+                    _deleteChildImagePrompt(childNo);
                   },
                 ),
                 const SizedBox(height: 14),
@@ -285,83 +467,98 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
-  void _onChildImageTap() {
-    if (_childProfileImage == null) {
-      _showAddPhotoSheet();
-    } else {
-      _showEditDeleteSheet();
-    }
-  }
+  void _onChildImageTapFromData(ChildModel? child) => _onChildImageTap(child);
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    return FutureBuilder<_ProfileData>(
+      future: _profileFuture,
+      builder: (context, snapshot) {
+        if (snapshot.connectionState != ConnectionState.done) {
+          return const Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return Scaffold(
+            backgroundColor: AppColors.background,
+            body: Center(child: Text('Profil yuklanmadi: ${snapshot.error}')),
+          );
+        }
+
+        final data = snapshot.data!;
+        final child = _selectedChild(data.children);
+        final childPhotoUrl =
+            _childPhotoUrl ?? BolajonimApi.resolveMediaUrl(child?.photoUrl);
+
+        return Scaffold(
+          backgroundColor: AppColors.background,
+          body: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 28),
               children: [
-                const Text('Profil', style: AppTextStyles.headlineMedium),
-                Container(
-                  width: 42,
-                  height: 42,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: IconButton(
-                    onPressed: () => _showPlaceholder(
-                      context,
-                      'Bildirishnomalar sahifasi keyin ulanadi.',
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    const Text('Profil', style: AppTextStyles.headlineMedium),
+                    Container(
+                      width: 42,
+                      height: 42,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                      child: IconButton(
+                        onPressed: _openSettings,
+                        icon: const Icon(
+                          Icons.notifications_none_rounded,
+                          color: AppColors.textPrimary,
+                        ),
+                      ),
                     ),
-                    icon: const Icon(
-                      Icons.notifications_none_rounded,
-                      color: AppColors.textPrimary,
-                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                _MainChildCard(
+                  childProfileImageBytes: _childProfileImageBytes,
+                  childPhotoUrl: childPhotoUrl,
+                  onImageTap: () => _onChildImageTapFromData(child),
+                  onEditTap: child == null
+                      ? () {}
+                      : () => _openEditChild(child),
+                  childName: child?.childName ?? 'Farzand',
+                  birthDate: _formatBirthDate(child?.birthDate),
+                  groupName: child?.groupName ?? '-',
+                  kindergartenName: child?.kindergartenName ?? '-',
+                ),
+                const SizedBox(height: 12),
+                _ParentAccountCard(
+                  userId: data.profile.userId,
+                  userName: data.profile.userName,
+                  relation: child?.relation ?? 'Ota-ona',
+                  onEditTap: () => _openEditParent(data.profile, child),
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  height: 96,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      for (final item in data.children)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: _ChildSwitcherCard(
+                            name: item.childName,
+                            isSelected: item.childNo == child?.childNo,
+                            onTap: () => widget.onChildSelected?.call(item.childNo),
+                          ),
+                        ),
+                      _AddChildCard(onTap: _openAddChildScreen),
+                    ],
                   ),
                 ),
-              ],
-            ),
-            const SizedBox(height: 20),
-
-            _MainChildCard(
-              childProfileImage: _childProfileImage,
-              onImageTap: _onChildImageTap,
-              onEditTap: () => _showPlaceholder(
-                context,
-                'Farzand profilini tahrirlash sahifasi keyin ulanadi.',
-              ),
-            ),
-
-            const SizedBox(height: 12),
-
-            const _ParentAccountCard(),
-
-            const SizedBox(height: 12),
-
-            SizedBox(
-              height: 96,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: [
-                  _ChildSwitcherCard(
-                    name: 'Salih',
-                    isSelected: true,
-                    onTap: () => _showPlaceholder(context, 'Salih tanlandi.'),
-                  ),
-                  const SizedBox(width: 12),
-                  _AddChildCard(
-                    onTap: () => _showPlaceholder(
-                      context,
-                      'Farzand qo‘shish sahifasi keyin ulanadi.',
-                    ),
-                  ),
-                ],
-              ),
-            ),
 
             const SizedBox(height: 12),
 
@@ -378,18 +575,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   _QuickActionItem(
                     icon: Icons.settings_outlined,
                     label: 'Sozlamalar',
-                    onTap: () => _showPlaceholder(
-                      context,
-                      'Ilova sozlamalari sahifasi keyin ulanadi.',
-                    ),
+                    onTap: _openSettings,
                   ),
                   _QuickActionItem(
                     icon: Icons.language_rounded,
                     label: 'Til',
-                    onTap: () => _showPlaceholder(
-                      context,
-                      'Til tanlash sahifasi keyin ulanadi.',
-                    ),
+                    onTap: _openSettings,
                   ),
                   _QuickActionItem(
                     icon: Icons.help_outline_rounded,
@@ -432,19 +623,43 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ],
         ),
       ),
+        );
+      },
     );
   }
+
+  String _formatBirthDate(String? value) {
+    if (value == null || value.length != 8) return '-';
+    return '${value.substring(6, 8)}.${value.substring(4, 6)}.${value.substring(0, 4)}';
+  }
+}
+
+class _ProfileData {
+  final ParentProfileModel profile;
+  final List<ChildModel> children;
+
+  const _ProfileData({required this.profile, required this.children});
 }
 
 class _MainChildCard extends StatelessWidget {
   final VoidCallback onEditTap;
   final VoidCallback onImageTap;
-  final File? childProfileImage;
+  final Uint8List? childProfileImageBytes;
+  final String? childPhotoUrl;
+  final String childName;
+  final String birthDate;
+  final String groupName;
+  final String kindergartenName;
 
   const _MainChildCard({
     required this.onEditTap,
     required this.onImageTap,
-    required this.childProfileImage,
+    required this.childProfileImageBytes,
+    required this.childPhotoUrl,
+    required this.childName,
+    required this.birthDate,
+    required this.groupName,
+    required this.kindergartenName,
   });
 
   @override
@@ -477,14 +692,20 @@ class _MainChildCard extends StatelessWidget {
                       decoration: BoxDecoration(
                         color: const Color(0xFFEFF8F6),
                         borderRadius: BorderRadius.circular(24),
-                        image: childProfileImage != null
+                        image: childProfileImageBytes != null
                             ? DecorationImage(
-                                image: FileImage(childProfileImage!),
+                                image: MemoryImage(childProfileImageBytes!),
                                 fit: BoxFit.cover,
                               )
-                            : null,
+                            : (childPhotoUrl != null && childPhotoUrl!.isNotEmpty)
+                                ? DecorationImage(
+                                    image: NetworkImage(childPhotoUrl!),
+                                    fit: BoxFit.cover,
+                                  )
+                                : null,
                       ),
-                      child: childProfileImage == null
+                      child: childProfileImageBytes == null &&
+                              (childPhotoUrl == null || childPhotoUrl!.isEmpty)
                           ? const Icon(
                               Icons.child_care_rounded,
                               size: 38,
@@ -504,7 +725,9 @@ class _MainChildCard extends StatelessWidget {
                           border: Border.all(color: Colors.white, width: 2.5),
                         ),
                         child: Icon(
-                          childProfileImage == null
+                          childProfileImageBytes == null &&
+                                  (childPhotoUrl == null ||
+                                      childPhotoUrl!.isEmpty)
                               ? Icons.add_a_photo_rounded
                               : Icons.edit_rounded,
                           size: 14,
@@ -516,20 +739,20 @@ class _MainChildCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 14),
-              const Expanded(
+              Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Salih',
-                      style: TextStyle(
+                      childName,
+                      style: const TextStyle(
                         fontSize: 22,
                         fontWeight: FontWeight.w700,
                         color: AppColors.textPrimary,
                       ),
                     ),
-                    SizedBox(height: 4),
-                    Text('Tanlangan farzand', style: AppTextStyles.bodySmall),
+                    const SizedBox(height: 4),
+                    const Text('Tanlangan farzand', style: AppTextStyles.bodySmall),
                   ],
                 ),
               ),
@@ -546,22 +769,22 @@ class _MainChildCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 18),
-          const Row(
+          Row(
             children: [
               Expanded(
                 child: _InfoMiniCard(
                   label: 'Tug‘ilgan sana',
-                  value: '15.11.2024',
+                  value: birthDate,
                 ),
               ),
-              SizedBox(width: 10),
+              const SizedBox(width: 10),
               Expanded(
-                child: _InfoMiniCard(label: 'Guruh', value: 'Kichik guruh'),
+                child: _InfoMiniCard(label: 'Guruh', value: groupName),
               ),
             ],
           ),
           const SizedBox(height: 10),
-          const _WideInfoCard(label: 'Bog‘cha', value: 'Rainbow bog‘chasi'),
+          _WideInfoCard(label: 'Bog‘cha', value: kindergartenName),
           const SizedBox(height: 16),
           SizedBox(
             width: double.infinity,
@@ -812,7 +1035,17 @@ class _QuickActionItem extends StatelessWidget {
 }
 
 class _ParentAccountCard extends StatelessWidget {
-  const _ParentAccountCard();
+  final String userId;
+  final String userName;
+  final String relation;
+  final VoidCallback onEditTap;
+
+  const _ParentAccountCard({
+    required this.userId,
+    required this.userName,
+    required this.relation,
+    required this.onEditTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -822,22 +1055,53 @@ class _ParentAccountCard extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(24),
       ),
-      child: const Row(
+      child: Column(
         children: [
-          CircleAvatar(
-            radius: 24,
-            backgroundColor: Color(0xFFF4F6F9),
-            child: Icon(Icons.person_rounded, color: AppColors.textPrimary),
+          Row(
+            children: [
+              const CircleAvatar(
+                radius: 24,
+                backgroundColor: Color(0xFFF4F6F9),
+                child: Icon(Icons.person_rounded, color: AppColors.textPrimary),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(userName, style: AppTextStyles.bodyMedium),
+                    const SizedBox(height: 4),
+                    Text(relation, style: AppTextStyles.bodySmall),
+                    const SizedBox(height: 2),
+                    Text(
+                      'ID: $userId',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Stark', style: AppTextStyles.bodyMedium),
-                SizedBox(height: 4),
-                Text('Ota', style: AppTextStyles.bodySmall),
-              ],
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onEditTap,
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              label: const Text(
+                'Ota-ona ma’lumotlarini tahrirlash',
+                style: TextStyle(fontWeight: FontWeight.w600),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.primary,
+                side: const BorderSide(color: AppColors.primary),
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(18),
+                ),
+              ),
             ),
           ),
         ],

@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
+import '/../../core/models/daily_report_model.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
+import '/../../core/utils/html_text.dart';
+import '/../../core/utils/report_format_utils.dart';
+import '/../../core/widgets/network_image_frame.dart';
+import '/../../core/widgets/report_status_banner.dart';
+import 'parent_report_detail_screen.dart';
 
 class ReportScreen extends StatefulWidget {
   const ReportScreen({super.key});
@@ -10,9 +18,113 @@ class ReportScreen extends StatefulWidget {
 }
 
 class _ReportScreenState extends State<ReportScreen> {
-  String _selectedMonthLabel = 'Aprel 2026';
+  late String _selectedReportMonth;
+  late String _selectedMonthLabel;
+  late Future<List<ReportItem>> _reportsFuture;
+  final _searchController = TextEditingController();
+  String _searchQuery = '';
 
-  final List<ReportItem> _reports = _dummyReports;
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _selectedReportMonth = _yearMonth(now);
+    _selectedMonthLabel = _monthLabel(now);
+    _reportsFuture = _loadReports();
+    _searchController.addListener(() {
+      setState(() => _searchQuery = _searchController.text.trim().toLowerCase());
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  String _yearMonth(DateTime date) {
+    return '${date.year}${date.month.toString().padLeft(2, '0')}';
+  }
+
+  String _monthLabel(DateTime date) {
+    const months = [
+      '',
+      'Yanvar',
+      'Fevral',
+      'Mart',
+      'Aprel',
+      'May',
+      'Iyun',
+      'Iyul',
+      'Avgust',
+      'Sentabr',
+      'Oktabr',
+      'Noyabr',
+      'Dekabr',
+    ];
+    return '${months[date.month]} ${date.year}';
+  }
+
+  Future<List<ReportItem>> _loadReports() async {
+    final children = await BolajonimApi.getChildren();
+    if (children.isEmpty) return [];
+
+    final childNo = await SelectedChildService.resolveSelection(children);
+    if (childNo == null) return [];
+
+    final reports = await BolajonimApi.getReports(
+      childNo: childNo,
+      reportMonth: _selectedReportMonth,
+    );
+
+    return reports.map(_toReportItem).whereType<ReportItem>().where((r) => !r.isDeleted).toList();
+  }
+
+  ReportItem? _toReportItem(DailyReportModel model) {
+    final date = model.parsedDate;
+    if (date == null) return null;
+
+    return ReportItem(
+      reportNo: model.reportNo,
+      childNo: model.childNo,
+      reportType: model.reportType,
+      date: date,
+      direction: model.direction.toLowerCase() == 'hometocenter'
+          ? ReportDirection.homeToCenter
+          : ReportDirection.centerToHome,
+      previewText: decodeHtmlText(model.previewText ?? ''),
+      coverPhotoUrl: model.coverPhotoUrl,
+      createdAt: model.createdAt,
+      reportStatus: model.reportStatus,
+      useYn: model.useYn,
+    );
+  }
+
+  List<ReportItem> _filterReports(List<ReportItem> reports) {
+    if (_searchQuery.isEmpty) return reports;
+    return reports.where((item) {
+      final haystack = [
+        item.typeLabel,
+        item.previewText,
+        ReportFormatUtils.formatTimestamp(item.createdAt),
+        '${item.date.day}.${item.date.month}.${item.date.year}',
+      ].join(' ').toLowerCase();
+      return haystack.contains(_searchQuery);
+    }).toList();
+  }
+
+  void _reloadReports() {
+    setState(() {
+      _reportsFuture = _loadReports();
+    });
+  }
+
+  Future<void> _refreshReports() async {
+    setState(() {
+      _reportsFuture = _loadReports();
+    });
+    await _reportsFuture;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -51,50 +163,124 @@ class _ReportScreenState extends State<ReportScreen> {
         child: const Icon(Icons.edit_rounded, color: Colors.white),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            _MonthFilterCard(
-              selectedMonthLabel: _selectedMonthLabel,
-              onTap: () async {
-                final selected = await showModalBottomSheet<String>(
-                  context: context,
-                  backgroundColor: Colors.white,
-                  shape: const RoundedRectangleBorder(
-                    borderRadius: BorderRadius.vertical(
-                      top: Radius.circular(24),
-                    ),
-                  ),
-                  builder: (_) => const _MonthPickerSheet(),
-                );
+        child: FutureBuilder<List<ReportItem>>(
+          future: _reportsFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
 
-                if (selected != null) {
-                  setState(() {
-                    _selectedMonthLabel = selected;
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 12),
-            const _ChildMessageBanner(),
-            const SizedBox(height: 12),
-            ..._reports.map(
-              (report) => Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _ReportListCard(
-                  item: report,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ReportDetailScreen(item: report),
+            if (snapshot.hasError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'Hisobotlarni yuklab bo‘lmadi.\n${snapshot.error}',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              );
+            }
+
+            final reports = _filterReports(snapshot.data ?? []);
+
+            return RefreshIndicator(
+              onRefresh: _refreshReports,
+              color: AppColors.primary,
+              child: ListView(
+              physics: const AlwaysScrollableScrollPhysics(),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              children: [
+                _MonthFilterCard(
+                  selectedMonthLabel: _selectedMonthLabel,
+                  onTap: () async {
+                    final selected = await showModalBottomSheet<String>(
+                      context: context,
+                      backgroundColor: Colors.white,
+                      shape: const RoundedRectangleBorder(
+                        borderRadius: BorderRadius.vertical(
+                          top: Radius.circular(24),
+                        ),
+                      ),
+                      builder: (_) => _MonthPickerSheet(
+                        selectedMonth: _selectedReportMonth,
                       ),
                     );
+
+                    if (selected != null) {
+                      final year = int.parse(selected.substring(0, 4));
+                      final month = int.parse(selected.substring(4, 6));
+                      setState(() {
+                        _selectedReportMonth = selected;
+                        _selectedMonthLabel = _monthLabel(DateTime(year, month));
+                      });
+                      _reloadReports();
+                    }
                   },
                 ),
-              ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Hisobot bo‘yicha qidirish...',
+                    prefixIcon: const Icon(Icons.search_rounded),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            onPressed: _searchController.clear,
+                            icon: const Icon(Icons.close_rounded),
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 12,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                const _ChildMessageBanner(),
+                const SizedBox(height: 12),
+                if ((snapshot.data ?? []).isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: Text('Bu oy uchun hisobot yo‘q.')),
+                  )
+                else if (reports.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(child: Text('Qidiruv bo‘yicha natija topilmadi.')),
+                  )
+                else
+                  ...reports.map(
+                    (report) => Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _ReportListCard(
+                        item: report,
+                        onTap: () {
+                          final reportNo = report.reportNo;
+                          if (reportNo == null) return;
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => ParentReportDetailScreen(
+                                reportNo: reportNo,
+                                childNo: report.childNo,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ),
+              ],
             ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -103,26 +289,46 @@ class _ReportScreenState extends State<ReportScreen> {
 
 enum ReportDirection { centerToHome, homeToCenter }
 
-enum WeatherType { sunny, cloudy, rainy }
-
 class ReportItem {
+  final int? reportNo;
+  final String childNo;
+  final String reportType;
   final DateTime date;
   final ReportDirection direction;
   final String previewText;
-  final int commentCount;
-  final WeatherType weather;
-  final String? imagePath;
-  final bool hasAttachment;
+  final String? coverPhotoUrl;
+  final String? createdAt;
+  final String? reportStatus;
+  final String? useYn;
 
   const ReportItem({
+    this.reportNo,
+    required this.childNo,
+    this.reportType = 'daily',
     required this.date,
     required this.direction,
     required this.previewText,
-    required this.commentCount,
-    required this.weather,
-    this.imagePath,
-    this.hasAttachment = false,
+    this.coverPhotoUrl,
+    this.createdAt,
+    this.reportStatus,
+    this.useYn,
   });
+
+  bool get isDeleted =>
+      (useYn ?? '').toUpperCase() == 'N' ||
+      (reportStatus ?? '').toLowerCase() == 'deleted';
+
+  String get typeLabel {
+    if (reportType.toLowerCase() == 'health') {
+      return 'Sog\'liq ko\'rik';
+    }
+    switch (direction) {
+      case ReportDirection.centerToHome:
+        return 'Bog\'chadan uyga';
+      case ReportDirection.homeToCenter:
+        return 'Uydan bog\'chaga';
+    }
+  }
 }
 
 class _MonthFilterCard extends StatelessWidget {
@@ -165,11 +371,37 @@ class _MonthFilterCard extends StatelessWidget {
 }
 
 class _MonthPickerSheet extends StatelessWidget {
-  const _MonthPickerSheet();
+  final String selectedMonth;
+
+  const _MonthPickerSheet({required this.selectedMonth});
+
+  List<MapEntry<String, String>> _recentMonths() {
+    final now = DateTime.now();
+    return List.generate(6, (index) {
+      final date = DateTime(now.year, now.month - index, 1);
+      final key = '${date.year}${date.month.toString().padLeft(2, '0')}';
+      const monthNames = [
+        '',
+        'Yanvar',
+        'Fevral',
+        'Mart',
+        'Aprel',
+        'May',
+        'Iyun',
+        'Iyul',
+        'Avgust',
+        'Sentabr',
+        'Oktabr',
+        'Noyabr',
+        'Dekabr',
+      ];
+      return MapEntry(key, '${monthNames[date.month]} ${date.year}');
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    const months = ['Aprel 2026', 'Mart 2026', 'Fevral 2026', 'Yanvar 2026'];
+    final months = _recentMonths();
 
     return SafeArea(
       child: Padding(
@@ -191,8 +423,11 @@ class _MonthPickerSheet extends StatelessWidget {
             ...months.map(
               (month) => ListTile(
                 contentPadding: EdgeInsets.zero,
-                title: Text(month, style: AppTextStyles.bodyMedium),
-                onTap: () => Navigator.pop(context, month),
+                title: Text(month.value, style: AppTextStyles.bodyMedium),
+                trailing: selectedMonth == month.key
+                    ? const Icon(Icons.check_rounded, color: AppColors.primary)
+                    : null,
+                onTap: () => Navigator.pop(context, month.key),
               ),
             ),
           ],
@@ -244,141 +479,124 @@ class _ReportListCard extends StatelessWidget {
     return weekdays[date.weekday];
   }
 
-  String _directionLabel(ReportDirection direction) {
-    switch (direction) {
-      case ReportDirection.centerToHome:
-        return 'Bog‘chadan uyga';
-      case ReportDirection.homeToCenter:
-        return 'Uydan bog‘chaga';
+  Color _typeColor(ReportItem item) {
+    if (item.reportType.toLowerCase() == 'health') {
+      return AppColors.primary;
     }
-  }
-
-  Color _directionColor(ReportDirection direction) {
-    switch (direction) {
-      case ReportDirection.centerToHome:
-        return AppColors.textPrimary;
-      case ReportDirection.homeToCenter:
-        return const Color(0xFF4A90E2);
-    }
-  }
-
-  IconData _weatherIcon(WeatherType weather) {
-    switch (weather) {
-      case WeatherType.sunny:
-        return Icons.wb_sunny_outlined;
-      case WeatherType.cloudy:
-        return Icons.cloud_outlined;
-      case WeatherType.rainy:
-        return Icons.umbrella_outlined;
-    }
+    return item.direction == ReportDirection.homeToCenter
+        ? const Color(0xFF4A90E2)
+        : AppColors.textPrimary;
   }
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(22),
-      onTap: onTap,
-      child: Ink(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(22),
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            SizedBox(
-              width: 58,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${item.date.day}',
-                    style: const TextStyle(
-                      fontSize: 34,
-                      fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
-                      height: 1,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Text(
-                    _weekdayLabel(item.date),
-                    style: AppTextStyles.bodyMedium,
-                  ),
-                  const SizedBox(height: 14),
-                  Icon(
-                    _weatherIcon(item.weather),
-                    color: AppColors.textSecondary,
-                    size: 26,
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
+    final coverUrl = BolajonimApi.resolveMediaUrl(item.coverPhotoUrl);
+    final created = ReportFormatUtils.formatTimestamp(item.createdAt);
+
+    return Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(20),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 52,
+                  alignment: Alignment.center,
+                  child: Column(
                     children: [
-                      const Icon(
-                        Icons.chat_bubble_outline_rounded,
-                        size: 18,
-                        color: AppColors.textSecondary,
-                      ),
-                      const SizedBox(width: 6),
                       Text(
-                        '${item.commentCount}',
-                        style: AppTextStyles.bodyMedium,
+                        '${item.date.day}',
+                        style: const TextStyle(
+                          fontSize: 28,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.textPrimary,
+                          height: 1,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _weekdayLabel(item.date),
+                        style: AppTextStyles.bodySmall,
                       ),
                     ],
                   ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _directionLabel(item.direction),
-                    style: TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.w700,
-                      color: _directionColor(item.direction),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    item.previewText,
-                    style: AppTextStyles.bodyMedium,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 12),
-            if ((item.imagePath ?? '').trim().isNotEmpty)
-              ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: SizedBox(
-                  width: 92,
-                  height: 92,
-                  child: Image.asset(
-                    item.imagePath!,
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) {
-                      return Container(
-                        color: const Color(0xFFF4F7FA),
-                        alignment: Alignment.center,
-                        child: const Icon(
-                          Icons.image_outlined,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
+                              ),
+                              decoration: BoxDecoration(
+                                color: _typeColor(item).withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                item.typeLabel,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: _typeColor(item),
+                                ),
+                              ),
+                            ),
+                          ),
+                          ReportStatusChip(
+                            reportStatus: item.reportStatus,
+                            useYn: item.useYn,
+                          ),
+                        ],
+                      ),
+                      if (item.previewText.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Text(
+                          item.previewText,
+                          style: AppTextStyles.bodySmall,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Text(
+                        created.isEmpty
+                            ? ReportFormatUtils.formatReportDate(
+                                '${item.date.year}${item.date.month.toString().padLeft(2, '0')}${item.date.day.toString().padLeft(2, '0')}',
+                              )
+                            : created,
+                        style: const TextStyle(
+                          fontSize: 12,
                           color: AppColors.textSecondary,
                         ),
-                      );
-                    },
+                      ),
+                    ],
                   ),
                 ),
-              ),
-          ],
+                if (coverUrl != null && coverUrl.isNotEmpty) ...[
+                  const SizedBox(width: 10),
+                  NetworkImageFrame(
+                    imageUrl: coverUrl,
+                    width: 64,
+                    height: 64,
+                    borderRadius: BorderRadius.circular(14),
+                    fit: BoxFit.cover,
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
-      ),
     );
   }
 }
@@ -405,15 +623,6 @@ class ReportDetailScreen extends StatelessWidget {
       'dekabr',
     ];
     return '${date.day}-${months[date.month]}, ${date.year}';
-  }
-
-  String _directionLabel(ReportDirection direction) {
-    switch (direction) {
-      case ReportDirection.centerToHome:
-        return 'Bog‘chadan uyga';
-      case ReportDirection.homeToCenter:
-        return 'Uydan bog‘chaga';
-    }
   }
 
   @override
@@ -445,15 +654,15 @@ class ReportDetailScreen extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  if ((item.imagePath ?? '').trim().isNotEmpty)
+                  if ((item.coverPhotoUrl ?? '').trim().isNotEmpty)
                     ClipRRect(
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(24),
                       ),
                       child: AspectRatio(
                         aspectRatio: 1.35,
-                        child: Image.asset(
-                          item.imagePath!,
+                        child: Image.network(
+                          BolajonimApi.resolveMediaUrl(item.coverPhotoUrl)!,
                           fit: BoxFit.cover,
                           errorBuilder: (_, __, ___) {
                             return Container(
@@ -475,7 +684,7 @@ class ReportDetailScreen extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _directionLabel(item.direction),
+                          item.typeLabel,
                           style: AppTextStyles.headlineMedium,
                         ),
                         const SizedBox(height: 8),
@@ -485,21 +694,6 @@ class ReportDetailScreen extends StatelessWidget {
                         ),
                         const SizedBox(height: 16),
                         Text(item.previewText, style: AppTextStyles.bodyMedium),
-                        const SizedBox(height: 16),
-                        Row(
-                          children: [
-                            const Icon(
-                              Icons.chat_bubble_outline_rounded,
-                              size: 18,
-                              color: AppColors.textSecondary,
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              '${item.commentCount} ta izoh',
-                              style: AppTextStyles.bodyMedium,
-                            ),
-                          ],
-                        ),
                       ],
                     ),
                   ),
@@ -608,48 +802,3 @@ class ReportWriteScreen extends StatelessWidget {
     );
   }
 }
-
-final List<ReportItem> _dummyReports = [
-  ReportItem(
-    date: DateTime(2026, 4, 20),
-    direction: ReportDirection.centerToHome,
-    previewText: 'Assalomu alaykum, bugun Sali yaxshi kayfiyatda o‘ynadi 😊',
-    commentCount: 1,
-    weather: WeatherType.sunny,
-    imagePath: '',
-  ),
-  ReportItem(
-    date: DateTime(2026, 4, 20),
-    direction: ReportDirection.centerToHome,
-    previewText:
-        'Bugun ovqatdan keyin biroz charchadi, lekin keyin yaxshi o‘ynadi.',
-    commentCount: 2,
-    weather: WeatherType.sunny,
-    imagePath: '',
-  ),
-  ReportItem(
-    date: DateTime(2026, 4, 17),
-    direction: ReportDirection.homeToCenter,
-    previewText: 'Assalomu alaykum ustoz, bugun Sali biroz uyqusirab turibdi.',
-    commentCount: 1,
-    weather: WeatherType.cloudy,
-    imagePath: '',
-  ),
-  ReportItem(
-    date: DateTime(2026, 4, 15),
-    direction: ReportDirection.centerToHome,
-    previewText: 'Bugun rasm chizish mashg‘ulotida faol qatnashdi 😊',
-    commentCount: 4,
-    weather: WeatherType.sunny,
-    imagePath: '',
-  ),
-  ReportItem(
-    date: DateTime(2026, 4, 14),
-    direction: ReportDirection.centerToHome,
-    previewText:
-        'Ochiq havoda yaxshi o‘ynadi va do‘stlari bilan muloqot qildi.',
-    commentCount: 2,
-    weather: WeatherType.cloudy,
-    imagePath: '',
-  ),
-];

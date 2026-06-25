@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import '/../../core/models/gallery_model.dart';
+import '/../../core/models/meal_model.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
 
@@ -11,113 +15,87 @@ class GalleryScreen extends StatefulWidget {
 
 class _GalleryScreenState extends State<GalleryScreen> {
   late DateTime _selectedDate;
-
-  final Map<DateTime, DailyGalleryData> _galleryMap = {
-    _dateOnly(DateTime(2026, 4, 20)): DailyGalleryData(
-      teacherNote:
-          'Bugun bolalar rasm chizish, ochiq havoda o‘ynash va birgalikdagi faoliyatlardan juda xursand bo‘lishdi.',
-      albums: [
-        GalleryAlbum(
-          title: 'Ertalabki mashg‘ulot',
-          subtitle: 'Rasm chizish va ranglarni o‘rganish',
-          coverImage:
-              'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=1200&q=80',
-          photoCount: 4,
-          photos: const [
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Ranglar bilan ishlash',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1511988617509-a57c8a288659?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Birgalikdagi ijodiy ish',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1519340241574-2cec6aef0c01?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Do‘stlari bilan mashg‘ulot',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Tayyor ishlarni ko‘rsatish',
-            ),
-          ],
-        ),
-        GalleryAlbum(
-          title: 'Ochiq havo',
-          subtitle: 'Maydonchadagi faol o‘yinlar',
-          coverImage:
-              'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=1200&q=80',
-          photoCount: 5,
-          photos: const [
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1516627145497-ae6968895b74?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Maydonchada yugurish',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1542810634-71277d95dcbb?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Birgalikda o‘yin',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1519340241574-2cec6aef0c01?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Kulgu va quvonchli lahzalar',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1511988617509-a57c8a288659?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Do‘stlari bilan vaqt',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1503454537195-1dcabb73ffb9?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Faol harakatlar',
-            ),
-          ],
-        ),
-      ],
-    ),
-    _dateOnly(DateTime(2026, 4, 19)): DailyGalleryData(
-      teacherNote:
-          'Bugun sokinroq kun bo‘ldi. Hikoya va konstruktor bilan mashg‘ulotlar qilindi.',
-      albums: [
-        GalleryAlbum(
-          title: 'Kitob va hikoya vaqti',
-          subtitle: 'Rasmlar ko‘rish va tinglash',
-          coverImage:
-              'https://images.unsplash.com/photo-1588072432836-e10032774350?auto=format&fit=crop&w=1200&q=80',
-          photoCount: 3,
-          photos: const [
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1588072432836-e10032774350?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Hikoyani tinglash',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1503676382389-4809596d5290?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Kitob bilan tanishish',
-            ),
-            GalleryPhoto(
-              imageUrl:
-                  'https://images.unsplash.com/photo-1519340241574-2cec6aef0c01?auto=format&fit=crop&w=1200&q=80',
-              caption: 'Davra suhbati',
-            ),
-          ],
-        ),
-      ],
-    ),
-  };
+  DailyGalleryData? _galleryData;
+  bool _isLoading = true;
+  String _childName = 'Farzand';
+  String _groupName = '-';
 
   @override
   void initState() {
     super.initState();
     _selectedDate = _dateOnly(DateTime.now());
+    _loadGallery();
+  }
+
+  Future<void> _loadGallery() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final children = await BolajonimApi.getChildren();
+      if (children.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _galleryData = null;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final childNo = await SelectedChildService.resolveSelection(children);
+      final child = children.firstWhere(
+        (item) => item.childNo == childNo,
+        orElse: () => children.first,
+      );
+
+      final gallery = await BolajonimApi.getGallery(
+        childNo: child.childNo,
+        galleryDt: BolajonimDateParser.toYyyyMmDd(_selectedDate),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _childName = child.childName;
+        _groupName = child.groupName ?? '-';
+        _galleryData = _mapGallery(gallery);
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _galleryData = null;
+        _isLoading = false;
+      });
+    }
+  }
+
+  DailyGalleryData? _mapGallery(GalleryDayModel gallery) {
+    if (gallery.albums.isEmpty) return null;
+
+    return DailyGalleryData(
+      teacherNote: gallery.teacherNote,
+      albums: gallery.albums
+          .map(
+            (album) => GalleryAlbum(
+              title: album.albumTitle,
+              subtitle: album.albumSubtitle,
+              coverImage: album.coverUrl.isNotEmpty
+                  ? album.coverUrl
+                  : (album.photos.isNotEmpty
+                        ? album.photos.first.imageUrl
+                        : ''),
+              photoCount: album.photos.length,
+              photos: album.photos
+                  .map(
+                    (photo) => GalleryPhoto(
+                      imageUrl: photo.imageUrl,
+                      caption: photo.caption,
+                    ),
+                  )
+                  .toList(),
+            ),
+          )
+          .toList(),
+    );
   }
 
   static DateTime _dateOnly(DateTime date) {
@@ -128,6 +106,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
     setState(() {
       _selectedDate = _selectedDate.subtract(const Duration(days: 1));
     });
+    _loadGallery();
   }
 
   void _goNextDay() {
@@ -139,12 +118,14 @@ class _GalleryScreenState extends State<GalleryScreen> {
     setState(() {
       _selectedDate = nextDay;
     });
+    _loadGallery();
   }
 
   void _goToday() {
     setState(() {
       _selectedDate = _dateOnly(DateTime.now());
     });
+    _loadGallery();
   }
 
   String _dateLabel(DateTime date) {
@@ -180,7 +161,7 @@ class _GalleryScreenState extends State<GalleryScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final data = _galleryMap[_selectedDate];
+    final data = _galleryData;
     final isToday = _selectedDate == _dateOnly(DateTime.now());
 
     return Scaffold(
@@ -199,36 +180,40 @@ class _GalleryScreenState extends State<GalleryScreen> {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            const _GalleryHeaderCard(
-              childName: 'SALIH (Sali)',
-              groupName: 'Kichik guruh',
-            ),
-            const SizedBox(height: 12),
-            _DateNavigatorCard(
-              dateLabel: _dateLabel(_selectedDate),
-              isToday: isToday,
-              onPrevious: _goPreviousDay,
-              onNext: _goNextDay,
-              onToday: _goToday,
-            ),
-            const SizedBox(height: 12),
-            if (data == null)
-              _EmptyGalleryCard(dateLabel: _dateLabel(_selectedDate))
-            else ...[
-              _TeacherNoteCard(note: data.teacherNote),
-              const SizedBox(height: 12),
-              ...data.albums.map(
-                (album) => Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: _GalleryAlbumCard(album: album),
-                ),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  _GalleryHeaderCard(
+                    childName: _childName,
+                    groupName: _groupName,
+                  ),
+                  const SizedBox(height: 12),
+                  _DateNavigatorCard(
+                    dateLabel: _dateLabel(_selectedDate),
+                    isToday: isToday,
+                    onPrevious: _goPreviousDay,
+                    onNext: _goNextDay,
+                    onToday: _goToday,
+                  ),
+                  const SizedBox(height: 12),
+                  if (data == null)
+                    _EmptyGalleryCard(dateLabel: _dateLabel(_selectedDate))
+                  else ...[
+                    if (data.teacherNote.trim().isNotEmpty)
+                      _TeacherNoteCard(note: data.teacherNote),
+                    if (data.teacherNote.trim().isNotEmpty)
+                      const SizedBox(height: 12),
+                    ...data.albums.map(
+                      (album) => Padding(
+                        padding: const EdgeInsets.only(bottom: 12),
+                        child: _GalleryAlbumCard(album: album),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ],
-        ),
       ),
     );
   }

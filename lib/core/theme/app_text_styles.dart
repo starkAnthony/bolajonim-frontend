@@ -43,4 +43,14 @@ class AppTextStyles {
     color: AppColors.textSecondary,
     height: 1.4,
   );
+
+  static const TextStyle countryFlag = TextStyle(
+    fontSize: 20,
+    fontFamily: 'Noto Color Emoji',
+    fontFamilyFallback: [
+      'Apple Color Emoji',
+      'Segoe UI Emoji',
+      'Segoe UI Symbol',
+    ],
+  );
 }

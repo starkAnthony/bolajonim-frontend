@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '/../../core/models/pickup_model.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
 
@@ -12,75 +15,161 @@ class PickupScreen extends StatefulWidget {
 class _PickupScreenState extends State<PickupScreen> {
   final TextEditingController _noteController = TextEditingController();
 
-  late PickupPerson _selectedTodayPerson;
-
-  final List<PickupPerson> _pickupPeople = const [
-    PickupPerson(
-      id: '1',
-      name: 'Onasi',
-      relation: 'Ona',
-      phone: '+82 10-1234-5678',
-      avatarColor: Color(0xFFEFF9F6),
-      iconColor: AppColors.primary,
-      icon: Icons.woman_rounded,
-      isDefault: true,
-    ),
-    PickupPerson(
-      id: '2',
-      name: 'Otasi',
-      relation: 'Ota',
-      phone: '+82 10-8765-4321',
-      avatarColor: Color(0xFFEDF4FF),
-      iconColor: Color(0xFF4A90E2),
-      icon: Icons.man_rounded,
-    ),
-    PickupPerson(
-      id: '3',
-      name: 'Dilnoza opa',
-      relation: 'Xolasi',
-      phone: '+82 10-5555-1122',
-      avatarColor: Color(0xFFFFF5EA),
-      iconColor: Color(0xFFFF9F43),
-      icon: Icons.person_outline_rounded,
-    ),
-  ];
-
-  final List<PickupHistoryItem> _history = const [
-    PickupHistoryItem(
-      dateLabel: 'Bugun',
-      personName: 'Onasi',
-      relation: 'Ona',
-      time: '17:40',
-      status: PickupStatus.planned,
-    ),
-    PickupHistoryItem(
-      dateLabel: 'Kecha',
-      personName: 'Otasi',
-      relation: 'Ota',
-      time: '18:05',
-      status: PickupStatus.completed,
-    ),
-    PickupHistoryItem(
-      dateLabel: '18-aprel',
-      personName: 'Onasi',
-      relation: 'Ona',
-      time: '17:32',
-      status: PickupStatus.completed,
-    ),
-    PickupHistoryItem(
-      dateLabel: '17-aprel',
-      personName: 'Dilnoza opa',
-      relation: 'Xolasi',
-      time: '17:50',
-      status: PickupStatus.completed,
-    ),
-  ];
+  PickupPerson? _selectedTodayPerson;
+  List<PickupPerson> _pickupPeople = [];
+  List<PickupHistoryItem> _history = [];
+  bool _isLoading = true;
+  String _childName = 'Farzand';
+  String _groupName = '-';
 
   @override
   void initState() {
     super.initState();
-    _selectedTodayPerson = _pickupPeople.firstWhere((e) => e.isDefault);
-    _noteController.text = 'Bugun odatdagidek kechki payt olib ketadi.';
+    _loadPickup();
+  }
+
+  Future<void> _loadPickup() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final children = await BolajonimApi.getChildren();
+      if (children.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _pickupPeople = [];
+          _history = [];
+          _selectedTodayPerson = null;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final childNo = await SelectedChildService.resolveSelection(children);
+      final child = children.firstWhere(
+        (item) => item.childNo == childNo,
+        orElse: () => children.first,
+      );
+
+      final pickup = await BolajonimApi.getPickup(childNo: child.childNo);
+      final people = pickup.persons.map(_mapPerson).toList();
+      final history = pickup.history.map(_mapHistoryItem).toList();
+
+      PickupPerson? selected;
+      final todayPlan = pickup.todayPlan;
+      if (people.isNotEmpty) {
+        if (todayPlan != null) {
+          for (final person in people) {
+            if (person.name == todayPlan.personName) {
+              selected = person;
+              break;
+            }
+          }
+        }
+        selected ??= people.firstWhere(
+          (person) => person.isDefault,
+          orElse: () => people.first,
+        );
+      }
+      if (todayPlan != null) {
+        _noteController.text = todayPlan.noteText ?? '';
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _childName = child.childName;
+        _groupName = child.groupName ?? '-';
+        _pickupPeople = people;
+        _history = history;
+        _selectedTodayPerson = selected;
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _pickupPeople = [];
+        _history = [];
+        _selectedTodayPerson = null;
+        _isLoading = false;
+      });
+    }
+  }
+
+  PickupPerson _mapPerson(PickupPersonModel model) {
+    final style = _iconStyle(model.iconType);
+    return PickupPerson(
+      id: model.personNo?.toString() ?? model.personName,
+      name: model.personName,
+      relation: model.relationName,
+      phone: model.phoneNo?.isNotEmpty == true ? model.phoneNo! : '-',
+      avatarColor: style.$1,
+      iconColor: style.$2,
+      icon: style.$3,
+      isDefault: model.isDefault,
+    );
+  }
+
+  (Color, Color, IconData) _iconStyle(String? iconType) {
+    switch (iconType?.toLowerCase()) {
+      case 'father':
+        return (
+          const Color(0xFFEDF4FF),
+          const Color(0xFF4A90E2),
+          Icons.man_rounded,
+        );
+      case 'mother':
+        return (
+          const Color(0xFFEFF9F6),
+          AppColors.primary,
+          Icons.woman_rounded,
+        );
+      default:
+        return (
+          const Color(0xFFFFF5EA),
+          const Color(0xFFFF9F43),
+          Icons.person_outline_rounded,
+        );
+    }
+  }
+
+  PickupHistoryItem _mapHistoryItem(PickupPlanModel plan) {
+    final date = plan.parsedDate;
+    return PickupHistoryItem(
+      dateLabel: date == null ? plan.pickupDate : _historyDateLabel(date),
+      personName: plan.personName,
+      relation: plan.relationName,
+      time: plan.plannedTime ?? '-',
+      status: plan.status.toLowerCase() == 'completed'
+          ? PickupStatus.completed
+          : PickupStatus.planned,
+    );
+  }
+
+  String _historyDateLabel(DateTime date) {
+    final today = DateTime(date.year, date.month, date.day);
+    final now = DateTime.now();
+    final todayOnly = DateTime(now.year, now.month, now.day);
+    final yesterday = todayOnly.subtract(const Duration(days: 1));
+
+    if (today == todayOnly) return 'Bugun';
+    if (today == yesterday) return 'Kecha';
+
+    const months = [
+      '',
+      'yanvar',
+      'fevral',
+      'mart',
+      'aprel',
+      'may',
+      'iyun',
+      'iyul',
+      'avgust',
+      'sentabr',
+      'oktabr',
+      'noyabr',
+      'dekabr',
+    ];
+
+    return '${date.day}-${months[date.month]}';
   }
 
   @override
@@ -89,33 +178,24 @@ class _PickupScreenState extends State<PickupScreen> {
     super.dispose();
   }
 
-  void _openPickupSelector() async {
-    final PickupPerson? result = await showModalBottomSheet<PickupPerson>(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => _PickupPersonSelectorSheet(
-        people: _pickupPeople,
-        selectedPerson: _selectedTodayPerson,
+  void _selectTodayPerson(PickupPerson person) {
+    if (_selectedTodayPerson?.id == person.id) return;
+
+    setState(() {
+      _selectedTodayPerson = person;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Bugungi olib ketish: ${person.name}',
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 2),
       ),
     );
-
-    if (result != null) {
-      setState(() {
-        _selectedTodayPerson = result;
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            'Bugungi olib ketish: ${result.name}',
-            style: const TextStyle(color: Colors.white),
-          ),
-          backgroundColor: AppColors.primary,
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
   }
 
   void _savePickupInfo() {
@@ -127,16 +207,6 @@ class _PickupScreenState extends State<PickupScreen> {
         ),
         backgroundColor: AppColors.primary,
         behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  void _openAddPersonPlaceholder() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) =>
-            const _PickupPlaceholderScreen(title: 'Yangi odam qo‘shish'),
       ),
     );
   }
@@ -159,48 +229,40 @@ class _PickupScreenState extends State<PickupScreen> {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            const _PickupHeaderCard(
-              childName: 'SALIH (Sali)',
-              groupName: 'Kichik guruh',
-            ),
-            const SizedBox(height: 12),
-
-            _TodayPickupCard(
-              person: _selectedTodayPerson,
-              onChangeTap: _openPickupSelector,
-            ),
-            const SizedBox(height: 12),
-
-            _TeacherSafetyNoteCard(
-              note:
-                  'Farzandni faqat oldindan ko‘rsatilgan va tasdiqlangan shaxs olib ketishi mumkin.',
-            ),
-            const SizedBox(height: 12),
-
-            _PickupNoteEditorCard(
-              controller: _noteController,
-              onSave: _savePickupInfo,
-            ),
-            const SizedBox(height: 12),
-
-            _ApprovedPeopleCard(
-              people: _pickupPeople,
-              selectedTodayPerson: _selectedTodayPerson,
-              onSelect: (person) {
-                setState(() {
-                  _selectedTodayPerson = person;
-                });
-              },
-              onAddNew: _openAddPersonPlaceholder,
-            ),
-            const SizedBox(height: 12),
-
-            _PickupHistoryCard(history: _history),
-          ],
-        ),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  _PickupHeaderCard(
+                    childName: _childName,
+                    groupName: _groupName,
+                  ),
+                  const SizedBox(height: 12),
+                  if (_selectedTodayPerson != null) ...[
+                    _TodayPickupCard(person: _selectedTodayPerson!),
+                    const SizedBox(height: 12),
+                  ],
+                  const _TeacherSafetyNoteCard(
+                    note:
+                        'Farzandni faqat oldindan ko‘rsatilgan va tasdiqlangan shaxs olib ketishi mumkin.',
+                  ),
+                  const SizedBox(height: 12),
+                  _PickupNoteEditorCard(
+                    controller: _noteController,
+                    onSave: _savePickupInfo,
+                  ),
+                  const SizedBox(height: 12),
+                  if (_pickupPeople.isNotEmpty)
+                    _ApprovedPeopleCard(
+                      people: _pickupPeople,
+                      selectedTodayPerson: _selectedTodayPerson ?? _pickupPeople.first,
+                      onSelect: _selectTodayPerson,
+                    ),
+                  if (_pickupPeople.isNotEmpty) const SizedBox(height: 12),
+                  if (_history.isNotEmpty) _PickupHistoryCard(history: _history),
+                ],
+              ),
       ),
     );
   }
@@ -290,9 +352,8 @@ class _PickupHeaderCard extends StatelessWidget {
 
 class _TodayPickupCard extends StatelessWidget {
   final PickupPerson person;
-  final VoidCallback onChangeTap;
 
-  const _TodayPickupCard({required this.person, required this.onChangeTap});
+  const _TodayPickupCard({required this.person});
 
   @override
   Widget build(BuildContext context) {
@@ -353,35 +414,11 @@ class _TodayPickupCard extends StatelessWidget {
                 SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Tarbiyachi farzandni shu shaxsga topshiradi.',
+                    'Tarbiyachi farzandni shu shaxsga topshiradi. Quyidagi ro‘yxatdan o‘zgartirishingiz mumkin.',
                     style: AppTextStyles.bodyMedium,
                   ),
                 ),
               ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          SizedBox(
-            width: double.infinity,
-            child: InkWell(
-              onTap: onChangeTap,
-              borderRadius: BorderRadius.circular(16),
-              child: Ink(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: AppColors.primary,
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Center(
-                  child: Text(
-                    'O‘zgartirish',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
             ),
           ),
         ],
@@ -483,24 +520,20 @@ class _PickupNoteEditorCard extends StatelessWidget {
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            child: InkWell(
-              onTap: onSave,
-              borderRadius: BorderRadius.circular(16),
-              child: Ink(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF4F7FA),
+            height: 48,
+            child: OutlinedButton(
+              onPressed: onSave,
+              style: OutlinedButton.styleFrom(
+                backgroundColor: const Color(0xFFF4F7FA),
+                foregroundColor: AppColors.textPrimary,
+                side: const BorderSide(color: Color(0xFFD5DDE6)),
+                shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Center(
-                  child: Text(
-                    'Saqlash',
-                    style: TextStyle(
-                      color: AppColors.textPrimary,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
+              ),
+              child: const Text(
+                'Saqlash',
+                style: TextStyle(fontWeight: FontWeight.w700),
               ),
             ),
           ),
@@ -514,13 +547,11 @@ class _ApprovedPeopleCard extends StatelessWidget {
   final List<PickupPerson> people;
   final PickupPerson selectedTodayPerson;
   final ValueChanged<PickupPerson> onSelect;
-  final VoidCallback onAddNew;
 
   const _ApprovedPeopleCard({
     required this.people,
     required this.selectedTodayPerson,
     required this.onSelect,
-    required this.onAddNew,
   });
 
   @override
@@ -534,43 +565,13 @@ class _ApprovedPeopleCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          const Row(
             children: [
-              const Icon(Icons.people_alt_outlined, color: AppColors.primary),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text(
-                  'Tasdiqlangan odamlar',
-                  style: AppTextStyles.titleLarge,
-                ),
-              ),
-              InkWell(
-                onTap: onAddNew,
-                borderRadius: BorderRadius.circular(14),
-                child: Ink(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFEFF9F6),
-                    borderRadius: BorderRadius.circular(14),
-                  ),
-                  child: const Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(Icons.add, size: 16, color: AppColors.primary),
-                      SizedBox(width: 4),
-                      Text(
-                        'Qo‘shish',
-                        style: TextStyle(
-                          color: AppColors.primary,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+              Icon(Icons.people_alt_outlined, color: AppColors.primary),
+              SizedBox(width: 8),
+              Text(
+                'Tasdiqlangan odamlar',
+                style: AppTextStyles.titleLarge,
               ),
             ],
           ),
@@ -604,83 +605,88 @@ class _PickupPersonTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Ink(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFFEFF9F6) : const Color(0xFFF7F9FC),
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isSelected ? AppColors.primary : const Color(0xFFE8EDF3),
-          ),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: person.avatarColor,
-              child: Icon(person.icon, color: person.iconColor, size: 22),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          decoration: BoxDecoration(
+            color: isSelected ? const Color(0xFFEFF9F6) : const Color(0xFFF7F9FC),
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(
+              color: isSelected ? AppColors.primary : const Color(0xFFE8EDF3),
             ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(14),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 22,
+                  backgroundColor: person.avatarColor,
+                  child: Icon(person.icon, color: person.iconColor, size: 22),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(person.name, style: AppTextStyles.titleLarge),
-                      if (person.isDefault) ...[
-                        const SizedBox(width: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFFFF5EA),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: const Text(
-                            'Asosiy',
-                            style: TextStyle(
-                              color: Color(0xFFFF9F43),
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
+                      Row(
+                        children: [
+                          Text(person.name, style: AppTextStyles.titleLarge),
+                          if (person.isDefault) ...[
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFFFF5EA),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: const Text(
+                                'Asosiy',
+                                style: TextStyle(
+                                  color: Color(0xFFFF9F43),
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
                             ),
-                          ),
-                        ),
-                      ],
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '${person.relation} • ${person.phone}',
+                        style: AppTextStyles.bodySmall,
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${person.relation} • ${person.phone}',
-                    style: AppTextStyles.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            Container(
-              width: 24,
-              height: 24,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: isSelected ? AppColors.primary : Colors.transparent,
-                border: Border.all(
-                  color: isSelected
-                      ? AppColors.primary
-                      : const Color(0xFFC8D2DD),
-                  width: 2,
                 ),
-              ),
-              child: isSelected
-                  ? const Icon(Icons.check, color: Colors.white, size: 14)
-                  : null,
+                const SizedBox(width: 10),
+                Container(
+                  width: 24,
+                  height: 24,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: isSelected ? AppColors.primary : Colors.transparent,
+                    border: Border.all(
+                      color: isSelected
+                          ? AppColors.primary
+                          : const Color(0xFFC8D2DD),
+                      width: 2,
+                    ),
+                  ),
+                  child: isSelected
+                      ? const Icon(Icons.check, color: Colors.white, size: 14)
+                      : null,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -788,151 +794,6 @@ class _PickupHistoryTile extends StatelessWidget {
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _PickupPersonSelectorSheet extends StatelessWidget {
-  final List<PickupPerson> people;
-  final PickupPerson selectedPerson;
-
-  const _PickupPersonSelectorSheet({
-    required this.people,
-    required this.selectedPerson,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 42,
-                height: 5,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFD5DDE6),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-              ),
-              const SizedBox(height: 16),
-              const Text(
-                'Kim olib ketadi?',
-                style: TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
-                ),
-              ),
-              const SizedBox(height: 16),
-              ...people.map(
-                (person) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _BottomSheetPersonTile(
-                    person: person,
-                    isSelected: selectedPerson.id == person.id,
-                    onTap: () {
-                      Navigator.pop(context, person);
-                    },
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BottomSheetPersonTile extends StatelessWidget {
-  final PickupPerson person;
-  final bool isSelected;
-  final VoidCallback onTap;
-
-  const _BottomSheetPersonTile({
-    required this.person,
-    required this.isSelected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Ink(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: isSelected ? AppColors.primary : const Color(0xFFE8EDF3),
-          ),
-        ),
-        child: Row(
-          children: [
-            CircleAvatar(
-              radius: 22,
-              backgroundColor: person.avatarColor,
-              child: Icon(person.icon, color: person.iconColor, size: 22),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(person.name, style: AppTextStyles.titleLarge),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${person.relation} • ${person.phone}',
-                    style: AppTextStyles.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            if (isSelected)
-              const Icon(Icons.check_circle, color: AppColors.primary),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _PickupPlaceholderScreen extends StatelessWidget {
-  final String title;
-
-  const _PickupPlaceholderScreen({required this.title});
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: AppColors.background,
-        elevation: 0,
-        scrolledUnderElevation: 0,
-        title: Text(
-          title,
-          style: const TextStyle(
-            color: AppColors.textPrimary,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        iconTheme: const IconThemeData(color: AppColors.textPrimary),
-      ),
-      body: Center(
-        child: Text('$title sahifasi', style: AppTextStyles.headlineMedium),
       ),
     );
   }

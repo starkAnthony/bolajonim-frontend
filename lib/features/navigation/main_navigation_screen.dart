@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
-import '../../../core/theme/app_colors.dart';
+
+import '../../core/models/child_model.dart';
+import '../../core/services/bolajonim_api.dart';
+import '../../core/services/selected_child_service.dart';
+import '../../core/services/splash_service.dart';
+import '../../core/theme/app_colors.dart';
 import '../home/home_screen.dart';
 import '../profile/profile_screen.dart';
 import '/../features/home/presentation/screens/schedule_screen.dart';
@@ -14,14 +19,14 @@ class MainNavigationScreen extends StatefulWidget {
 
 class _MainNavigationScreenState extends State<MainNavigationScreen> {
   int _selectedIndex = 0;
+  int _profileRefreshKey = 0;
+  int _homeRefreshKey = 0;
+  int _reportRefreshKey = 0;
   late final PageController _pageController;
 
-  late final List<Widget> _pages = [
-    HomeScreen(onOpenProfile: () => _onItemTapped(3)),
-    const ScheduleScreen(),
-    const ReportScreen(),
-    const ProfileScreen(),
-  ];
+  List<ChildModel> _children = [];
+  String? _selectedChildNo;
+  bool _isLoadingChildren = true;
 
   @override
   void initState() {
@@ -30,6 +35,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       initialPage: _selectedIndex,
       keepPage: true,
     );
+    _loadChildren();
   }
 
   @override
@@ -38,11 +44,53 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
     super.dispose();
   }
 
+  Future<void> _loadChildren({String? preferChildNo}) async {
+    try {
+      final children = await BolajonimApi.getChildren();
+      final selected = preferChildNo ??
+          await SelectedChildService.resolveSelection(children);
+
+      if (selected != null) {
+        await SelectedChildService.save(selected);
+      }
+
+      if (!mounted) return;
+
+      setState(() {
+        _children = children;
+        _selectedChildNo = selected;
+        _isLoadingChildren = false;
+      });
+
+      if (selected != null) {
+        SplashService.refresh(childNo: selected);
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isLoadingChildren = false);
+    }
+  }
+
+  Future<void> _selectChild(String childNo) async {
+    await SelectedChildService.save(childNo);
+    if (!mounted) return;
+    setState(() => _selectedChildNo = childNo);
+    SplashService.refresh(childNo: childNo);
+  }
+
+  Future<void> _onChildAdded(String childNo) async {
+    await _loadChildren(preferChildNo: childNo);
+    if (!mounted) return;
+    setState(() => _profileRefreshKey++);
+  }
+
   void _onItemTapped(int index) {
     if (_selectedIndex == index) return;
 
     setState(() {
       _selectedIndex = index;
+      if (index == 0) _homeRefreshKey++;
+      if (index == 2) _reportRefreshKey++;
     });
 
     _pageController.animateToPage(
@@ -62,6 +110,13 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_isLoadingChildren) {
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -71,7 +126,25 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             controller: _pageController,
             onPageChanged: _onPageChanged,
             physics: const NeverScrollableScrollPhysics(),
-            children: _pages,
+            children: [
+              HomeScreen(
+                key: ValueKey('home-$_selectedChildNo-$_homeRefreshKey'),
+                selectedChildNo: _selectedChildNo,
+                children: _children,
+                onChildSelected: _selectChild,
+                onOpenProfile: () => _onItemTapped(3),
+              ),
+              const ScheduleScreen(),
+              ReportScreen(
+                key: ValueKey('report-$_reportRefreshKey-$_selectedChildNo'),
+              ),
+              ProfileScreen(
+                key: ValueKey('profile-$_profileRefreshKey-$_selectedChildNo'),
+                selectedChildNo: _selectedChildNo,
+                onChildSelected: _selectChild,
+                onChildAdded: _onChildAdded,
+              ),
+            ],
           ),
         ),
       ),
@@ -86,7 +159,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
             borderRadius: BorderRadius.circular(28),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.08),
+                color: Colors.black.withValues(alpha: 0.08),
                 blurRadius: 24,
                 offset: const Offset(0, 10),
               ),
@@ -109,7 +182,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
                       child: Container(
                         width: itemWidth - 12,
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withOpacity(0.14),
+                          color: AppColors.primary.withValues(alpha: 0.14),
                           borderRadius: BorderRadius.circular(22),
                         ),
                       ),

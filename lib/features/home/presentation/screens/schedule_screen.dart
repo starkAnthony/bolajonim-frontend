@@ -1,4 +1,8 @@
 import 'package:flutter/material.dart';
+import '/../../core/models/meal_model.dart';
+import '/../../core/models/schedule_model.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
 
@@ -11,134 +15,98 @@ class ScheduleScreen extends StatefulWidget {
 
 class _ScheduleScreenState extends State<ScheduleScreen> {
   late DateTime _selectedDate;
-
-  final Map<DateTime, DailyScheduleData> _scheduleMap = {
-    _dateOnly(DateTime(2026, 4, 20)): DailyScheduleData(
-      teacherNote:
-          'Bugun bolalar bilan rasm chizish va ochiq havoda harakatli o‘yinlar rejalashtirilgan.',
-      items: const [
-        ScheduleItem(
-          time: '08:30',
-          title: 'Bolalarni kutib olish',
-          subtitle: 'Erkin o‘yin va salomlashish',
-          type: ScheduleItemType.arrival,
-        ),
-        ScheduleItem(
-          time: '09:00',
-          title: 'Ertalabki badantarbiya',
-          subtitle: 'Yengil mashqlar va harakatli o‘yinlar',
-          type: ScheduleItemType.exercise,
-        ),
-        ScheduleItem(
-          time: '09:30',
-          title: 'Ertalabki tamaddi',
-          subtitle: 'Yengil ovqatlanish va suv ichish',
-          type: ScheduleItemType.meal,
-        ),
-        ScheduleItem(
-          time: '10:15',
-          title: 'Asosiy mashg‘ulot',
-          subtitle: 'Rasm chizish va ranglarni o‘rganish',
-          type: ScheduleItemType.study,
-        ),
-        ScheduleItem(
-          time: '11:20',
-          title: 'Ochiq havo',
-          subtitle: 'Maydonchada o‘yin va sayr',
-          type: ScheduleItemType.outdoor,
-        ),
-        ScheduleItem(
-          time: '12:10',
-          title: 'Tushlik',
-          subtitle: 'Asosiy ovqatlanish va dam olishga tayyorgarlik',
-          type: ScheduleItemType.meal,
-        ),
-        ScheduleItem(
-          time: '13:00',
-          title: 'Tushki uyqu',
-          subtitle: 'Dam olish va sokin vaqt',
-          type: ScheduleItemType.sleep,
-        ),
-        ScheduleItem(
-          time: '15:20',
-          title: 'Uyg‘onish va tamaddi',
-          subtitle: 'Yengil tamaddi va suv ichish',
-          type: ScheduleItemType.meal,
-        ),
-        ScheduleItem(
-          time: '16:00',
-          title: 'Erkin o‘yin',
-          subtitle: 'Konstruktor, kitob va muloqot',
-          type: ScheduleItemType.play,
-        ),
-        ScheduleItem(
-          time: '17:10',
-          title: 'Uyga tayyorgarlik',
-          subtitle: 'Ota-onalarni kutish',
-          type: ScheduleItemType.pickup,
-        ),
-      ],
-    ),
-    _dateOnly(DateTime(2026, 4, 19)): DailyScheduleData(
-      teacherNote:
-          'Bugungi kun sokin faoliyatlar va hikoya tinglash bilan o‘tadi.',
-      items: const [
-        ScheduleItem(
-          time: '08:30',
-          title: 'Bolalarni kutib olish',
-          subtitle: 'Salomlashish va erkin o‘yin',
-          type: ScheduleItemType.arrival,
-        ),
-        ScheduleItem(
-          time: '09:15',
-          title: 'Ertalabki davra',
-          subtitle: 'Ob-havo va kayfiyat haqida suhbat',
-          type: ScheduleItemType.study,
-        ),
-        ScheduleItem(
-          time: '09:40',
-          title: 'Tamaddi',
-          subtitle: 'Yengil ovqatlanish',
-          type: ScheduleItemType.meal,
-        ),
-        ScheduleItem(
-          time: '10:30',
-          title: 'Hikoya va kitob vaqti',
-          subtitle: 'Rasmlarni ko‘rish va savol-javob',
-          type: ScheduleItemType.story,
-        ),
-        ScheduleItem(
-          time: '11:30',
-          title: 'Ochiq havo',
-          subtitle: 'Sayr va qum o‘yinlari',
-          type: ScheduleItemType.outdoor,
-        ),
-        ScheduleItem(
-          time: '12:10',
-          title: 'Tushlik',
-          subtitle: 'Asosiy ovqatlanish',
-          type: ScheduleItemType.meal,
-        ),
-        ScheduleItem(
-          time: '13:00',
-          title: 'Dam olish',
-          subtitle: 'Tinch vaqt va uyqu',
-          type: ScheduleItemType.sleep,
-        ),
-        ScheduleItem(
-          time: '15:30',
-          title: 'Erkin o‘yin',
-          subtitle: 'Do‘stlar bilan o‘yin',
-          type: ScheduleItemType.play,
-        ),
-      ],
-    ),
-  };
+  DailyScheduleData? _scheduleData;
+  bool _isLoading = true;
+  String _childName = 'Farzand';
+  String _groupName = '-';
 
   @override
   void initState() {
     super.initState();
     _selectedDate = _dateOnly(DateTime.now());
+    _loadSchedule();
+  }
+
+  Future<void> _loadSchedule() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final children = await BolajonimApi.getChildren();
+      if (children.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _scheduleData = null;
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final childNo = await SelectedChildService.resolveSelection(children);
+      final child = children.firstWhere(
+        (item) => item.childNo == childNo,
+        orElse: () => children.first,
+      );
+
+      final schedule = await BolajonimApi.getSchedule(
+        childNo: child.childNo,
+        scheduleDt: BolajonimDateParser.toYyyyMmDd(_selectedDate),
+      );
+
+      if (!mounted) return;
+      setState(() {
+        _childName = child.childName;
+        _groupName = child.groupName ?? '-';
+        _scheduleData = _mapSchedule(schedule);
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _scheduleData = null;
+        _isLoading = false;
+      });
+    }
+  }
+
+  DailyScheduleData? _mapSchedule(ScheduleDayModel schedule) {
+    if (schedule.items.isEmpty) return null;
+
+    return DailyScheduleData(
+      teacherNote: schedule.teacherNote,
+      items: schedule.items
+          .map(
+            (item) => ScheduleItem(
+              time: item.startTime,
+              title: item.title,
+              subtitle: item.subtitle,
+              type: _mapScheduleType(item.itemType),
+            ),
+          )
+          .toList(),
+    );
+  }
+
+  ScheduleItemType _mapScheduleType(String type) {
+    switch (type.toLowerCase()) {
+      case 'arrival':
+        return ScheduleItemType.arrival;
+      case 'exercise':
+        return ScheduleItemType.exercise;
+      case 'meal':
+        return ScheduleItemType.meal;
+      case 'outdoor':
+        return ScheduleItemType.outdoor;
+      case 'sleep':
+        return ScheduleItemType.sleep;
+      case 'play':
+        return ScheduleItemType.play;
+      case 'pickup':
+        return ScheduleItemType.pickup;
+      case 'story':
+        return ScheduleItemType.story;
+      default:
+        return ScheduleItemType.study;
+    }
   }
 
   static DateTime _dateOnly(DateTime date) {
@@ -149,6 +117,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     setState(() {
       _selectedDate = _selectedDate.subtract(const Duration(days: 1));
     });
+    _loadSchedule();
   }
 
   void _goNextDay() {
@@ -160,12 +129,14 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     setState(() {
       _selectedDate = nextDay;
     });
+    _loadSchedule();
   }
 
   void _goToday() {
     setState(() {
       _selectedDate = _dateOnly(DateTime.now());
     });
+    _loadSchedule();
   }
 
   String _dateLabel(DateTime date) {
@@ -201,7 +172,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final data = _scheduleMap[_selectedDate];
+    final data = _scheduleData;
     final isToday = _selectedDate == _dateOnly(DateTime.now());
 
     return Scaffold(
@@ -220,31 +191,36 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SafeArea(
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          children: [
-            const _ScheduleHeaderCard(
-              childName: 'SALIH (Sali)',
-              groupName: 'Kichik guruh',
-            ),
-            const SizedBox(height: 12),
-            _DateNavigatorCard(
-              dateLabel: _dateLabel(_selectedDate),
-              isToday: isToday,
-              onPrevious: _goPreviousDay,
-              onNext: _goNextDay,
-              onToday: _goToday,
-            ),
-            const SizedBox(height: 12),
-            if (data == null)
-              _EmptyScheduleCard(dateLabel: _dateLabel(_selectedDate))
-            else ...[
-              _TeacherNoteCard(note: data.teacherNote),
-              const SizedBox(height: 12),
-              _TimelineCard(items: data.items, isToday: isToday),
-            ],
-          ],
-        ),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  _ScheduleHeaderCard(
+                    childName: _childName,
+                    groupName: _groupName,
+                  ),
+                  const SizedBox(height: 12),
+                  _DateNavigatorCard(
+                    dateLabel: _dateLabel(_selectedDate),
+                    isToday: isToday,
+                    onPrevious: _goPreviousDay,
+                    onNext: _goNextDay,
+                    onToday: _goToday,
+                  ),
+                  const SizedBox(height: 12),
+                  if (data == null)
+                    _EmptyScheduleCard(dateLabel: _dateLabel(_selectedDate))
+                  else ...[
+                    if (data.teacherNote.trim().isNotEmpty)
+                      _TeacherNoteCard(note: data.teacherNote),
+                    if (data.teacherNote.trim().isNotEmpty)
+                      const SizedBox(height: 12),
+                    const _SchedulePlanInfoCard(),
+                    const SizedBox(height: 12),
+                    _ScheduleListCard(items: data.items),
+                  ],                ],
+              ),
       ),
     );
   }
@@ -283,10 +259,36 @@ enum ScheduleItemType {
   story,
 }
 
-enum ScheduleProgress { done, current, upcoming }
+class _SchedulePlanInfoCard extends StatelessWidget {
+  const _SchedulePlanInfoCard();
 
-class _ScheduleHeaderCard extends StatelessWidget {
-  final String childName;
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F9FC),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE8EDF3)),
+      ),
+      child: const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline_rounded, color: AppColors.textSecondary, size: 20),
+          SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Bu rejalashtirilgan kun tartibi. Vaqt taxminiy — bolalar ehtiyojiga qarab o‘zgarishi mumkin.',
+              style: AppTextStyles.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ScheduleHeaderCard extends StatelessWidget {  final String childName;
   final String groupName;
 
   const _ScheduleHeaderCard({required this.childName, required this.groupName});
@@ -364,10 +366,9 @@ class _DateNavigatorCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  isToday ? 'Bugungi jadval' : 'Tanlangan sana',
+                  isToday ? 'Kun tartibi' : 'Tanlangan sana',
                   style: AppTextStyles.bodySmall,
-                ),
-              ],
+                ),              ],
             ),
           ),
           const SizedBox(width: 8),
@@ -463,50 +464,10 @@ class _TeacherNoteCard extends StatelessWidget {
   }
 }
 
-class _TimelineCard extends StatelessWidget {
+class _ScheduleListCard extends StatelessWidget {
   final List<ScheduleItem> items;
-  final bool isToday;
 
-  const _TimelineCard({required this.items, required this.isToday});
-
-  ScheduleProgress _getProgress(
-    int index,
-    List<ScheduleItem> items,
-    bool isToday,
-  ) {
-    if (!isToday) return ScheduleProgress.done;
-
-    final now = TimeOfDay.now();
-    final nowMinutes = now.hour * 60 + now.minute;
-
-    final current = items[index];
-    final currentMinutes = _toMinutes(current.time);
-
-    int? nextMinutes;
-
-    if (index < items.length - 1) {
-      nextMinutes = _toMinutes(items[index + 1].time);
-    }
-
-    if (nowMinutes < currentMinutes) {
-      return ScheduleProgress.upcoming;
-    }
-
-    if (nextMinutes == null) {
-      return ScheduleProgress.current;
-    }
-
-    if (nowMinutes >= currentMinutes && nowMinutes < nextMinutes) {
-      return ScheduleProgress.current;
-    }
-
-    return ScheduleProgress.done;
-  }
-
-  int _toMinutes(String time) {
-    final parts = time.split(':');
-    return int.parse(parts[0]) * 60 + int.parse(parts[1]);
-  }
+  const _ScheduleListCard({required this.items});
 
   @override
   Widget build(BuildContext context) {
@@ -519,10 +480,8 @@ class _TimelineCard extends StatelessWidget {
       child: Column(
         children: List.generate(items.length, (index) {
           final item = items[index];
-          final progress = _getProgress(index, items, isToday);
-          return _TimelineItemWidget(
+          return _ScheduleListItem(
             item: item,
-            progress: progress,
             isLast: index == items.length - 1,
           );
         }),
@@ -531,54 +490,15 @@ class _TimelineCard extends StatelessWidget {
   }
 }
 
-class _TimelineItemWidget extends StatelessWidget {
+class _ScheduleListItem extends StatelessWidget {
   final ScheduleItem item;
-  final ScheduleProgress progress;
   final bool isLast;
 
-  const _TimelineItemWidget({
-    required this.item,
-    required this.progress,
-    required this.isLast,
-  });
+  const _ScheduleListItem({required this.item, required this.isLast});
 
   @override
   Widget build(BuildContext context) {
     final meta = ScheduleItemMeta.fromType(item.type);
-
-    final Color dotColor;
-    final Color lineColor;
-    final Color cardColor;
-    final Color badgeColor;
-    final Color badgeTextColor;
-    final String badgeText;
-
-    switch (progress) {
-      case ScheduleProgress.done:
-        dotColor = const Color(0xFFB8C1CC);
-        lineColor = const Color(0xFFDCE3EA);
-        cardColor = const Color(0xFFF8FAFC);
-        badgeColor = const Color(0xFFEDEFF3);
-        badgeTextColor = AppColors.textSecondary;
-        badgeText = 'Tugagan';
-        break;
-      case ScheduleProgress.current:
-        dotColor = AppColors.primary;
-        lineColor = const Color(0xFFDCE3EA);
-        cardColor = const Color(0xFFEFF9F6);
-        badgeColor = AppColors.primary;
-        badgeTextColor = Colors.white;
-        badgeText = 'Hozir';
-        break;
-      case ScheduleProgress.upcoming:
-        dotColor = meta.iconColor;
-        lineColor = const Color(0xFFDCE3EA);
-        cardColor = Colors.white;
-        badgeColor = meta.softBackground;
-        badgeTextColor = meta.iconColor;
-        badgeText = 'Kutilmoqda';
-        break;
-    }
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -603,11 +523,12 @@ class _TimelineItemWidget extends StatelessWidget {
               width: 14,
               height: 14,
               decoration: BoxDecoration(
-                color: dotColor,
+                color: meta.iconColor,
                 shape: BoxShape.circle,
               ),
             ),
-            if (!isLast) Container(width: 2, height: 88, color: lineColor),
+            if (!isLast)
+              Container(width: 2, height: 72, color: const Color(0xFFDCE3EA)),
           ],
         ),
         const SizedBox(width: 12),
@@ -617,7 +538,7 @@ class _TimelineItemWidget extends StatelessWidget {
             child: Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: cardColor,
+                color: Colors.white,
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(color: const Color(0xFFEAEFF4)),
               ),
@@ -637,25 +558,6 @@ class _TimelineItemWidget extends StatelessWidget {
                         Text(item.title, style: AppTextStyles.titleLarge),
                         const SizedBox(height: 6),
                         Text(item.subtitle, style: AppTextStyles.bodyMedium),
-                        const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 6,
-                          ),
-                          decoration: BoxDecoration(
-                            color: badgeColor,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            badgeText,
-                            style: TextStyle(
-                              color: badgeTextColor,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ),
                       ],
                     ),
                   ),
@@ -669,8 +571,7 @@ class _TimelineItemWidget extends StatelessWidget {
   }
 }
 
-class _EmptyScheduleCard extends StatelessWidget {
-  final String dateLabel;
+class _EmptyScheduleCard extends StatelessWidget {  final String dateLabel;
 
   const _EmptyScheduleCard({required this.dateLabel});
 

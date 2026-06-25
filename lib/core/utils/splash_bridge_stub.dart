@@ -1,0 +1,3 @@
+void dismissHtmlSplash() {}
+
+void resetWebAppearance() {}

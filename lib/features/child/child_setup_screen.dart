@@ -1,20 +1,23 @@
 import 'package:flutter/material.dart';
+
+import '../../core/models/child_model.dart';
+import '../../core/services/api_client.dart';
+import '../../core/services/bolajonim_api.dart';
+import '../../core/services/selected_child_service.dart';
+import '../../core/services/session_service.dart';
 import '../../core/theme/app_colors.dart';
 import '../../core/theme/app_text_styles.dart';
+import '../../core/utils/phone_utils.dart';
 import '../navigation/main_navigation_screen.dart';
 
 class ChildSetupScreen extends StatefulWidget {
-  final String parentName;
-  final String relation;
-  final String phone;
-  final String email;
+  final bool addAnotherChild;
+  final String? initialInviteCode;
 
   const ChildSetupScreen({
     super.key,
-    required this.parentName,
-    required this.relation,
-    required this.phone,
-    required this.email,
+    this.addAnotherChild = false,
+    this.initialInviteCode,
   });
 
   @override
@@ -23,37 +26,137 @@ class ChildSetupScreen extends StatefulWidget {
 
 class _ChildSetupScreenState extends State<ChildSetupScreen> {
   final TextEditingController _childNameController = TextEditingController();
-  final TextEditingController _nicknameController = TextEditingController();
   final TextEditingController _birthdayController = TextEditingController();
-  final TextEditingController _groupController = TextEditingController();
+  final TextEditingController _inviteCodeController = TextEditingController();
 
-  String _selectedGender = 'O‘g‘il';
+  bool _isLoading = false;
+  bool _isProfileLoading = true;
+  ChildModel? _matchedChild;
+
+  String _parentName = '';
+  String _relation = 'Ona';
+  String _phone = '';
+  String _email = '';
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialInviteCode != null &&
+        widget.initialInviteCode!.trim().isNotEmpty) {
+      _inviteCodeController.text = widget.initialInviteCode!.trim();
+    }
+    _loadParentProfile();
+    _loadPendingRelation();
+  }
+
+  Future<void> _loadPendingRelation() async {
+    final relation = await SessionService.consumePendingRelation();
+    if (!mounted || relation == null || relation.isEmpty) return;
+    setState(() => _relation = relation);
+  }
+
+  Future<void> _loadParentProfile() async {
+    try {
+      final profile = await BolajonimApi.getProfile();
+      if (!mounted) return;
+
+      setState(() {
+        _parentName = profile.userName;
+        _phone = PhoneUtils.formatDisplay(profile.phone);
+        _email = profile.email?.trim() ?? '';
+      });
+    } catch (_) {
+      // Profile fields stay empty if the API is unavailable.
+    } finally {
+      if (mounted) setState(() => _isProfileLoading = false);
+    }
+  }
 
   @override
   void dispose() {
     _childNameController.dispose();
-    _nicknameController.dispose();
     _birthdayController.dispose();
-    _groupController.dispose();
+    _inviteCodeController.dispose();
     super.dispose();
   }
 
-  void _handleContinue() {
+  Future<void> _lookupChild() async {
     final childName = _childNameController.text.trim();
-    final nickname = _nicknameController.text.trim();
     final birthday = _birthdayController.text.trim();
-    final group = _groupController.text.trim();
+    final inviteCode = _inviteCodeController.text.trim();
 
-    if (childName.isEmpty || birthday.isEmpty) {
-      _showMessage('Iltimos, majburiy maydonlarni to‘ldiring.');
+    if (childName.isEmpty || birthday.isEmpty || inviteCode.isEmpty) {
+      _showMessage('Taklif kodi, ism va tug‘ilgan sanani kiriting.');
       return;
     }
 
-    Navigator.pushAndRemoveUntil(
-      context,
-      MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
-      (route) => false,
-    );
+    setState(() {
+      _isLoading = true;
+      _matchedChild = null;
+    });
+
+    try {
+      final child = await BolajonimApi.lookupChildForLink(
+        childName: childName,
+        birthday: birthday,
+        inviteCode: inviteCode,
+      );
+      if (!mounted) return;
+      setState(() => _matchedChild = child);
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _showMessage(e.message);
+    } catch (e) {
+      if (!mounted) return;
+      _showMessage('Bolani topib bo‘lmadi: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _linkChild() async {
+    if (_matchedChild == null) {
+      await _lookupChild();
+      if (_matchedChild == null) return;
+    }
+
+    final childName = _childNameController.text.trim();
+    final birthday = _birthdayController.text.trim();
+    final inviteCode = _inviteCodeController.text.trim();
+
+    setState(() => _isLoading = true);
+
+    try {
+      final child = await BolajonimApi.linkChild(
+        childName: childName,
+        birthday: birthday,
+        inviteCode: inviteCode,
+        relation: _relation,
+      );
+
+      await SelectedChildService.save(child.childNo);
+
+      if (!mounted) return;
+
+      if (widget.addAnotherChild) {
+        Navigator.pop(context, child.childNo);
+        return;
+      }
+
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (_) => const MainNavigationScreen()),
+        (route) => false,
+      );
+    } on ApiException catch (e) {
+      if (!mounted) return;
+      _showMessage('Bolani bog‘lashda xatolik: ${e.message}');
+    } catch (e) {
+      if (!mounted) return;
+      _showMessage('Bolani bog‘lashda xatolik: $e');
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   void _showMessage(String message) {
@@ -84,7 +187,10 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
     if (pickedDate != null) {
       final formatted =
           '${pickedDate.day.toString().padLeft(2, '0')}.${pickedDate.month.toString().padLeft(2, '0')}.${pickedDate.year}';
-      _birthdayController.text = formatted;
+      setState(() {
+        _birthdayController.text = formatted;
+        _matchedChild = null;
+      });
     }
   }
 
@@ -100,32 +206,41 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
             children: [
               Row(
                 children: [
-                  IconButton(
-                    onPressed: () => Navigator.pop(context),
-                    icon: const Icon(Icons.arrow_back_ios_new_rounded),
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(),
-                    splashRadius: 22,
-                  ),
+                  if (widget.addAnotherChild)
+                    IconButton(
+                      onPressed: () => Navigator.pop(context),
+                      icon: const Icon(Icons.arrow_back_ios_new_rounded),
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(),
+                      splashRadius: 22,
+                    ),
                 ],
               ),
-              const SizedBox(height: 20),
-              ClipRRect(
-                borderRadius: BorderRadius.circular(999),
-                child: LinearProgressIndicator(
-                  value: 1.0,
-                  minHeight: 6,
-                  backgroundColor: const Color(0xFFE6EAF0),
-                  valueColor: const AlwaysStoppedAnimation<Color>(
-                    AppColors.primary,
+              if (!widget.addAnotherChild) ...[
+                const SizedBox(height: 20),
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(999),
+                  child: LinearProgressIndicator(
+                    value: 1.0,
+                    minHeight: 6,
+                    backgroundColor: const Color(0xFFE6EAF0),
+                    valueColor: const AlwaysStoppedAnimation<Color>(
+                      AppColors.primary,
+                    ),
                   ),
                 ),
-              ),
+              ] else
+                const SizedBox(height: 20),
               const SizedBox(height: 28),
-              const Text('Bola profili', style: AppTextStyles.headlineMedium),
+              Text(
+                widget.addAnotherChild ? 'Yangi farzand' : 'Bolani bog‘lash',
+                style: AppTextStyles.headlineMedium,
+              ),
               const SizedBox(height: 8),
-              const Text(
-                'Farzandingiz haqidagi ma’lumotlarni kiriting',
+              Text(
+                widget.addAnotherChild
+                    ? 'Direktor ro‘yxatga olgan bolani taklif kodi bilan toping'
+                    : 'Direktor bog‘chaga qo‘shgan bolangizni taklif kodi, ism va tug‘ilgan sana bilan toping',
                 style: AppTextStyles.bodyMedium,
               ),
               const SizedBox(height: 22),
@@ -133,22 +248,21 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
                 child: SingleChildScrollView(
                   child: Column(
                     children: [
-                      _buildPhotoPlaceholder(),
-                      const SizedBox(height: 24),
+                      _buildLabel('Bog‘cha taklif kodi *'),
+                      const SizedBox(height: 8),
+                      _buildInput(
+                        hint: 'Direktordan olingan kod',
+                        controller: _inviteCodeController,
+                        onChanged: () => setState(() => _matchedChild = null),
+                      ),
+                      const SizedBox(height: 16),
 
                       _buildLabel('Bolaning to‘liq ismi *'),
                       const SizedBox(height: 8),
                       _buildInput(
-                        hint: 'Ism va familiyasini kiriting',
+                        hint: 'Direktor kiritganidek yozing',
                         controller: _childNameController,
-                      ),
-                      const SizedBox(height: 16),
-
-                      _buildLabel('Tahallus'),
-                      const SizedBox(height: 8),
-                      _buildInput(
-                        hint: 'Masalan: Ali',
-                        controller: _nicknameController,
+                        onChanged: () => setState(() => _matchedChild = null),
                       ),
                       const SizedBox(height: 16),
 
@@ -157,29 +271,49 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
                       _buildDateInput(),
                       const SizedBox(height: 16),
 
-                      _buildLabel('Jinsi'),
-                      const SizedBox(height: 8),
-                      _buildGenderSelector(),
-                      const SizedBox(height: 16),
-
-                      _buildLabel('Guruh / sinf'),
-                      const SizedBox(height: 8),
-                      _buildInput(
-                        hint: 'Masalan: Kichik guruh',
-                        controller: _groupController,
-                      ),
-                      const SizedBox(height: 20),
+                      if (_matchedChild != null) ...[
+                        _buildMatchedChildCard(_matchedChild!),
+                        const SizedBox(height: 16),
+                      ],
 
                       _buildParentInfoCard(),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 12),
+              if (_matchedChild == null)
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton(
+                    onPressed: _isLoading ? null : _lookupChild,
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: AppColors.primary,
+                      side: const BorderSide(color: AppColors.primary),
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(18),
+                      ),
+                    ),
+                    child: _isLoading
+                        ? const SizedBox(
+                            width: 22,
+                            height: 22,
+                            child: CircularProgressIndicator(strokeWidth: 2.4),
+                          )
+                        : const Text(
+                            'Bolangizni topish',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                  ),
+                ),
+              if (_matchedChild == null) const SizedBox(height: 10),
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
-                  onPressed: _handleContinue,
+                  onPressed: _isLoading || _matchedChild == null
+                      ? null
+                      : _linkChild,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
                     foregroundColor: Colors.white,
@@ -189,10 +323,25 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
                     ),
                     elevation: 0,
                   ),
-                  child: const Text(
-                    'Boshlash',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-                  ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          width: 22,
+                          height: 22,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2.4,
+                            valueColor:
+                                AlwaysStoppedAnimation<Color>(Colors.white),
+                          ),
+                        )
+                      : Text(
+                          _matchedChild == null
+                              ? 'Avval bolani toping'
+                              : 'Bog‘lash va boshlash',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                 ),
               ),
             ],
@@ -202,74 +351,49 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
     );
   }
 
-  Widget _buildPhotoPlaceholder() {
-    return Column(
-      children: [
-        Container(
-          width: 96,
-          height: 96,
-          decoration: BoxDecoration(
-            color: Colors.white,
-            shape: BoxShape.circle,
-            border: Border.all(color: const Color(0xFFE2E8F0), width: 1.5),
-          ),
-          child: const Icon(
-            Icons.camera_alt_rounded,
-            size: 34,
-            color: AppColors.textSecondary,
-          ),
-        ),
-        const SizedBox(height: 10),
-        const Text(
-          'Rasm qo‘shish',
-          style: TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w600,
-            color: AppColors.primary,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildGenderSelector() {
-    final genders = ['O‘g‘il', 'Qiz'];
-
+  Widget _buildMatchedChildCard(ChildModel child) {
     return Container(
-      padding: const EdgeInsets.all(6),
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: const Color(0xFFE8F8F1),
         borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: const Color(0xFF4CD3A6)),
       ),
-      child: Row(
-        children: genders.map((gender) {
-          final isSelected = _selectedGender == gender;
-          return Expanded(
-            child: GestureDetector(
-              onTap: () {
-                setState(() {
-                  _selectedGender = gender;
-                });
-              },
-              child: Container(
-                padding: const EdgeInsets.symmetric(vertical: 14),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppColors.primary : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Text(
-                  gender,
-                  textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: isSelected ? Colors.white : AppColors.textPrimary,
-                  ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Row(
+            children: [
+              Icon(Icons.check_circle_rounded, color: Color(0xFF2F9E74)),
+              SizedBox(width: 8),
+              Text(
+                'Bola topildi',
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF2F9E74),
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Text(
+            child.childName,
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: AppColors.textPrimary,
             ),
-          );
-        }).toList(),
+          ),
+          if (child.kindergartenName?.isNotEmpty == true) ...[
+            const SizedBox(height: 4),
+            Text(child.kindergartenName!, style: AppTextStyles.bodySmall),
+          ],
+          if (child.groupName?.isNotEmpty == true) ...[
+            const SizedBox(height: 2),
+            Text('Guruh: ${child.groupName}', style: AppTextStyles.bodySmall),
+          ],
+        ],
       ),
     );
   }
@@ -294,10 +418,21 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
             ),
           ),
           const SizedBox(height: 12),
-          _buildInfoRow('Ism', widget.parentName),
-          _buildInfoRow('Aloqa', widget.relation),
-          _buildInfoRow('Telefon', widget.phone),
-          _buildInfoRow('Email', widget.email),
+          if (_isProfileLoading)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: SizedBox(
+                width: 22,
+                height: 22,
+                child: CircularProgressIndicator(strokeWidth: 2.4),
+              ),
+            )
+          else ...[
+            _buildInfoRow('Ism', _parentName.isEmpty ? '—' : _parentName),
+            _buildInfoRow('Aloqa', _relation),
+            _buildInfoRow('Telefon', _phone.isEmpty ? '—' : _phone),
+            _buildInfoRow('Email', _email.isEmpty ? '—' : _email),
+          ],
         ],
       ),
     );
@@ -352,31 +487,28 @@ class _ChildSetupScreenState extends State<ChildSetupScreen> {
   Widget _buildInput({
     required String hint,
     required TextEditingController controller,
-    TextInputType keyboardType = TextInputType.text,
-    bool readOnly = false,
-    Widget? suffix,
-    VoidCallback? onTap,
+    VoidCallback? onChanged,
   }) {
     return TextField(
       controller: controller,
-      keyboardType: keyboardType,
-      readOnly: readOnly,
-      onTap: onTap,
-      decoration: InputDecoration(hintText: hint, suffixIcon: suffix),
+      onChanged: onChanged == null ? null : (_) => onChanged(),
+      decoration: InputDecoration(hintText: hint),
     );
   }
 
   Widget _buildDateInput() {
-    return _buildInput(
-      hint: 'KK.OO.YYYY',
+    return TextField(
       controller: _birthdayController,
       readOnly: true,
       onTap: _selectBirthday,
-      suffix: IconButton(
-        onPressed: _selectBirthday,
-        icon: const Icon(
-          Icons.calendar_month_rounded,
-          color: AppColors.textSecondary,
+      decoration: InputDecoration(
+        hintText: 'KK.OO.YYYY',
+        suffixIcon: IconButton(
+          onPressed: _selectBirthday,
+          icon: const Icon(
+            Icons.calendar_month_rounded,
+            color: AppColors.textSecondary,
+          ),
         ),
       ),
     );

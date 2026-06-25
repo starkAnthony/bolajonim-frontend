@@ -1,38 +1,151 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <!--
-    If you are serving your web app in a path other than the root, change the
-    href value below to reflect the base path you are serving from.
-
-    The path provided below has to start and end with a slash "/" in order for
-    it to work correctly.
-
-    For more details:
-    * https://developer.mozilla.org/en-US/docs/Web/HTML/Element/base
-
-    This is a placeholder for base href that will be replaced by the value of
-    the `--base-href` argument provided to `flutter build`.
-  -->
   <base href="$FLUTTER_BASE_HREF">
 
   <meta charset="UTF-8">
   <meta content="IE=Edge" http-equiv="X-UA-Compatible">
-  <meta name="description" content="A new Flutter project.">
+  <meta name="description" content="Bolajonim — bog'cha ilovasi">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 
-  <!-- iOS meta tags & icons -->
   <meta name="mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black">
-  <meta name="apple-mobile-web-app-title" content="bolajonim_app">
-  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Bolajonim">
+  <meta name="theme-color" content="#F8FBFF">
+  <link rel="apple-touch-icon" sizes="192x192" href="icons/Icon-192.png">
+  <link rel="apple-touch-icon" sizes="512x512" href="icons/Icon-512.png">
 
-  <!-- Favicon -->
   <link rel="icon" type="image/png" href="favicon.png"/>
 
-  <title>bolajonim_app</title>
+  <title>Bolajonim</title>
   <link rel="manifest" href="manifest.json">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Color+Emoji&display=swap" rel="stylesheet">
+
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      min-height: 100dvh;
+      background: #F8FBFF;
+    }
+
+    #bolajonim-splash {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      overflow: hidden;
+      background: #F8FBFF;
+      transition: opacity 0.35s ease, visibility 0.35s ease;
+    }
+
+    #bolajonim-splash.fade-out {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+    }
+
+    #bolajonim-splash-photo {
+      display: none;
+      position: absolute;
+      left: 0;
+      width: 100%;
+      top: calc(-1 * env(safe-area-inset-top, 0px));
+      height: calc(100% + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+      min-height: calc(100dvh + env(safe-area-inset-top, 0px) + env(safe-area-inset-bottom, 0px));
+      object-fit: cover;
+      object-position: center center;
+    }
+
+    #bolajonim-splash.image-ready {
+      background: transparent;
+    }
+
+    #bolajonim-splash.image-ready #bolajonim-splash-photo {
+      display: block;
+    }
+
+    #bolajonim-splash-flag-warmup {
+      position: absolute;
+      width: 0;
+      height: 0;
+      overflow: hidden;
+      opacity: 0;
+      pointer-events: none;
+      font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji';
+    }
+  </style>
 </head>
 <body>
+  <div id="bolajonim-splash" aria-live="polite" aria-busy="true">
+    <img id="bolajonim-splash-photo" alt="" decoding="async">
+    <div id="bolajonim-splash-flag-warmup" aria-hidden="true">🇺🇿🇺🇸🇷🇺🇰🇿🇹🇷🇦🇪🇬🇧🇩🇪🇰🇷🇮🇳🇨🇳🇯🇵🇸🇦🇫🇷🇮🇹🇨🇦🇦🇺🇲🇾🇮🇩🇹🇯🇰🇬</div>
+  </div>
+
   <script src="flutter_bootstrap.js" async></script>
+  <script>
+    var bolajonimSplashStartedAt = Date.now();
+    // Keep in sync with SplashService.minDisplayDuration in Dart (2300 ms).
+    var bolajonimMinSplashMs = 2300;
+
+    function enableSplashFullBleed() {
+      var status = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+      if (status) status.setAttribute('content', 'black-translucent');
+    }
+
+    function resetWebAppearance() {
+      var theme = document.querySelector('meta[name="theme-color"]');
+      if (theme) theme.setAttribute('content', '#F8FBFF');
+      var status = document.querySelector('meta[name="apple-mobile-web-app-status-bar-style"]');
+      if (status) status.setAttribute('content', 'default');
+      document.documentElement.style.background = '#F8FBFF';
+      document.body.style.background = '#F8FBFF';
+    }
+
+    (function applyCachedSplash() {
+      var splash = document.getElementById('bolajonim-splash');
+      var photo = document.getElementById('bolajonim-splash-photo');
+      var cachedUrl = localStorage.getItem('bolajonim_splash_url');
+
+      if (!cachedUrl) return;
+
+      photo.onload = function () {
+        enableSplashFullBleed();
+        splash.classList.add('image-ready');
+      };
+      photo.onerror = function () {
+        splash.classList.remove('image-ready');
+        resetWebAppearance();
+      };
+      photo.src = cachedUrl;
+    })();
+
+    function hideBolajonimSplash() {
+      var splash = document.getElementById('bolajonim-splash');
+      if (!splash || splash.classList.contains('fade-out')) return;
+
+      resetWebAppearance();
+
+      var elapsed = Date.now() - bolajonimSplashStartedAt;
+      var wait = Math.max(0, bolajonimMinSplashMs - elapsed);
+
+      window.setTimeout(function () {
+        splash.classList.add('fade-out');
+        splash.setAttribute('aria-busy', 'false');
+        window.setTimeout(function () {
+          splash.remove();
+        }, 400);
+      }, wait);
+    }
+
+    window.hideBolajonimSplash = hideBolajonimSplash;
+    window.resetBolajonimWebAppearance = resetWebAppearance;
+
+    window.setTimeout(hideBolajonimSplash, 25000);
+  </script>
 </body>
 </html>

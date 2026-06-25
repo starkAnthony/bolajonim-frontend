@@ -1,14 +1,100 @@
 import 'package:flutter/material.dart';
+import '/../../core/models/meal_model.dart';
+import '/../../core/services/bolajonim_api.dart';
+import '/../../core/services/selected_child_service.dart';
 import '/../../core/theme/app_colors.dart';
 import '/../../core/theme/app_text_styles.dart';
 
-class MealScreen extends StatelessWidget {
+class MealScreen extends StatefulWidget {
   const MealScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final mealDays = _dummyMealDays;
+  State<MealScreen> createState() => _MealScreenState();
+}
 
+class _MealScreenState extends State<MealScreen> {
+  List<MealDayData> _mealDays = [];
+  bool _isLoading = true;
+  String _childName = 'Farzand';
+  String _groupName = '-';
+
+  @override
+  void initState() {
+    super.initState();
+    _loadMeals();
+  }
+
+  Future<void> _loadMeals() async {
+    setState(() => _isLoading = true);
+
+    try {
+      final children = await BolajonimApi.getChildren();
+      if (children.isEmpty) {
+        if (!mounted) return;
+        setState(() {
+          _mealDays = [];
+          _isLoading = false;
+        });
+        return;
+      }
+
+      final childNo = await SelectedChildService.resolveSelection(children);
+      final child = children.firstWhere(
+        (item) => item.childNo == childNo,
+        orElse: () => children.first,
+      );
+
+      final month =
+          '${DateTime.now().year}${DateTime.now().month.toString().padLeft(2, '0')}';
+      final meals = await BolajonimApi.getMeals(
+        childNo: child.childNo,
+        mealMonth: month,
+      );
+
+      final grouped = <String, List<MealPhotoItem>>{};
+      for (final meal in meals) {
+        final date = meal.parsedDate;
+        if (date == null) continue;
+        final key = BolajonimDateParser.toYyyyMmDd(date);
+        grouped.putIfAbsent(key, () => []);
+        grouped[key]!.add(
+          MealPhotoItem(
+            mealType: meal.mealType,
+            imageUrl: meal.imageUrl,
+            menuText: meal.menuText,
+            note: meal.noteText,
+          ),
+        );
+      }
+
+      final days = grouped.entries
+          .map((entry) {
+            final date = BolajonimDateParser.parseYyyyMmDd(entry.key);
+            if (date == null) return null;
+            return MealDayData(date: date, meals: entry.value);
+          })
+          .whereType<MealDayData>()
+          .toList()
+        ..sort((a, b) => b.date.compareTo(a.date));
+
+      if (!mounted) return;
+      setState(() {
+        _mealDays = days;
+        _childName = child.childName;
+        _groupName = child.groupName ?? '-';
+        _isLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _mealDays = [];
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
@@ -25,22 +111,31 @@ class MealScreen extends StatelessWidget {
         iconTheme: const IconThemeData(color: AppColors.textPrimary),
       ),
       body: SafeArea(
-        child: ListView.separated(
-          padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          itemCount: mealDays.length + 1,
-          separatorBuilder: (_, __) => const SizedBox(height: 20),
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return const _MealHeaderCard(
-                childName: 'SALIH (Sali)',
-                groupName: 'Kichik guruh',
-              );
-            }
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : ListView.separated(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                itemCount: _mealDays.isEmpty ? 2 : _mealDays.length + 1,
+                separatorBuilder: (_, __) => const SizedBox(height: 20),
+                itemBuilder: (context, index) {
+                  if (index == 0) {
+                    return _MealHeaderCard(
+                      childName: _childName,
+                      groupName: _groupName,
+                    );
+                  }
 
-            final day = mealDays[index - 1];
-            return _MealDaySection(day: day);
-          },
-        ),
+                  if (_mealDays.isEmpty) {
+                    return const Text(
+                      'Bu oy uchun taomnoma ma’lumoti yo‘q.',
+                      style: AppTextStyles.bodyMedium,
+                    );
+                  }
+
+                  final day = _mealDays[index - 1];
+                  return _MealDaySection(day: day);
+                },
+              ),
       ),
     );
   }
@@ -55,13 +150,13 @@ class MealDayData {
 
 class MealPhotoItem {
   final String mealType;
-  final String imagePath;
+  final String? imageUrl;
   final String? menuText;
   final String? note;
 
   const MealPhotoItem({
     required this.mealType,
-    required this.imagePath,
+    this.imageUrl,
     this.menuText,
     this.note,
   });
@@ -206,21 +301,7 @@ class _MealPhotoCard extends StatelessWidget {
               ),
               child: AspectRatio(
                 aspectRatio: 1,
-                child: Image.asset(
-                  item.imagePath,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) {
-                    return Container(
-                      color: const Color(0xFFF4F7FA),
-                      alignment: Alignment.center,
-                      child: const Icon(
-                        Icons.image_not_supported_outlined,
-                        size: 36,
-                        color: AppColors.textSecondary,
-                      ),
-                    );
-                  },
-                ),
+                child: _MealImage(imageUrl: item.imageUrl),
               ),
             ),
             Padding(
@@ -309,21 +390,7 @@ class MealDetailScreen extends StatelessWidget {
                 children: [
                   AspectRatio(
                     aspectRatio: 1.15,
-                    child: Image.asset(
-                      item.imagePath,
-                      fit: BoxFit.cover,
-                      errorBuilder: (_, __, ___) {
-                        return Container(
-                          color: const Color(0xFFF4F7FA),
-                          alignment: Alignment.center,
-                          child: const Icon(
-                            Icons.image_not_supported_outlined,
-                            size: 44,
-                            color: AppColors.textSecondary,
-                          ),
-                        );
-                      },
-                    ),
+                    child: _MealImage(imageUrl: item.imageUrl),
                   ),
                   Padding(
                     padding: const EdgeInsets.all(16),
@@ -364,71 +431,33 @@ class MealDetailScreen extends StatelessWidget {
   }
 }
 
-final List<MealDayData> _dummyMealDays = [
-  MealDayData(
-    date: DateTime(2026, 4, 20),
-    meals: const [
-      MealPhotoItem(
-        mealType: 'Nonushta',
-        imagePath: 'assets/images/meals/2026_04_20_morning.jpg',
-        menuText: 'Banana bo‘laklari.',
-        note: 'Yaxshi yedi.',
+class _MealImage extends StatelessWidget {
+  final String? imageUrl;
+
+  const _MealImage({this.imageUrl});
+
+  @override
+  Widget build(BuildContext context) {
+    if (imageUrl != null && imageUrl!.startsWith('http')) {
+      return Image.network(
+        imageUrl!,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => _placeholder(),
+      );
+    }
+
+    return _placeholder();
+  }
+
+  Widget _placeholder() {
+    return Container(
+      color: const Color(0xFFF4F7FA),
+      alignment: Alignment.center,
+      child: const Icon(
+        Icons.restaurant_menu_rounded,
+        size: 36,
+        color: AppColors.textSecondary,
       ),
-      MealPhotoItem(
-        mealType: 'Tushlik',
-        imagePath: 'assets/images/meals/2026_04_20_lunch.jpg',
-        menuText: 'Guruch, ko‘katli sho‘rva, sabzavot salati.',
-        note: 'Asosiy ovqatni yaxshi yedi.',
-      ),
-      MealPhotoItem(
-        mealType: 'Kechki Snacks',
-        imagePath: 'assets/images/meals/2026_04_20_afternoon.jpg',
-        menuText: 'Kruassan va sut.',
-        note: 'Tamaddini tugatdi.',
-      ),
-    ],
-  ),
-  MealDayData(
-    date: DateTime(2026, 4, 19),
-    meals: const [
-      MealPhotoItem(
-        mealType: 'Ertalabki tamaddi',
-        imagePath: 'assets/images/meals/2026_04_19_morning.jpg',
-        menuText: 'Sutli bo‘tqa.',
-        note: 'Sekinroq yedi.',
-      ),
-      MealPhotoItem(
-        mealType: 'Tushlik',
-        imagePath: 'assets/images/meals/2026_04_19_lunch.jpg',
-        menuText: 'Guruch, makkajo‘xori aralashmasi, salat, ko‘katli sho‘rva.',
-        note: 'O‘rtacha ishtaha bilan yedi.',
-      ),
-      MealPhotoItem(
-        mealType: 'Kechki tamaddi',
-        imagePath: 'assets/images/meals/2026_04_19_afternoon.jpg',
-        menuText: 'Keks va ichimlik.',
-        note: 'Kamroq yedi.',
-      ),
-    ],
-  ),
-  MealDayData(
-    date: DateTime(2026, 4, 18),
-    meals: const [
-      MealPhotoItem(
-        mealType: 'Ertalabki tamaddi',
-        imagePath: 'assets/images/meals/2026_04_18_morning.jpg',
-        menuText: 'Olma bo‘laklari.',
-      ),
-      MealPhotoItem(
-        mealType: 'Tushlik',
-        imagePath: 'assets/images/meals/2026_04_18_lunch.jpg',
-        menuText: 'Guruch, sabzavotli sho‘rva, yon taomlar.',
-      ),
-      MealPhotoItem(
-        mealType: 'Kechki tamaddi',
-        imagePath: 'assets/images/meals/2026_04_18_afternoon.jpg',
-        menuText: 'Pishiriq va sut.',
-      ),
-    ],
-  ),
-];
+    );
+  }
+}
