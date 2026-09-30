@@ -7,6 +7,7 @@ import '../../../core/models/parent_profile_model.dart';
 import '../../../core/services/auth_service.dart';
 import '../../../core/services/bolajonim_api.dart';
 import '../../../core/services/api_client.dart';
+import '../../../core/utils/api_error_utils.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
 import '../../../features/auth/presentation/start_screen.dart';
@@ -160,7 +161,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Rasm saqlanmadi: $e')),
+        SnackBar(content: Text(ApiErrorUtils.localize('$e'))),
       );
     }
   }
@@ -190,7 +191,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Rasm yuklashda xatolik yuz berdi: $e')),
+        SnackBar(content: Text(ApiErrorUtils.localize('$e'))),
       );
     }
   }

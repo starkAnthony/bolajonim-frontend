@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../config/api_config.dart';
+import '../utils/api_error_utils.dart';
 
 class AuthException implements Exception {
   final String message;
@@ -81,7 +82,9 @@ class AuthService {
 
       if (result?['dupLoginYn'] == 'Y') {
         throw AuthException(
-          body['resultUserMessage']?.toString() ?? 'Duplicate login',
+          ApiErrorUtils.localize(
+            body['resultUserMessage']?.toString() ?? 'DUPLICATE_LOGIN',
+          ),
           type: 'DUP_LOGIN',
         );
       }
@@ -93,14 +96,16 @@ class AuthService {
 
       if (accessToken.isEmpty) {
         throw AuthException(
-          body['resultUserMessage']?.toString() ?? 'Token not received',
+          ApiErrorUtils.localize(
+            body['resultUserMessage']?.toString() ?? 'Token not received',
+          ),
           type: 'SERVER_ERROR',
         );
       }
 
       if (refreshToken.isEmpty) {
         throw AuthException(
-          'Refresh token not received',
+          ApiErrorUtils.localize('Refresh token not received'),
           type: 'SERVER_ERROR',
         );
       }
@@ -122,37 +127,10 @@ class AuthService {
   }
 
   static String _loginErrorMessage(String? codeOrMessage) {
-    const messages = {
-      'INVALID_USER_INFO': 'Telefon, ID, email yoki parol noto\'g\'ri.',
-      'INVALID_ID_PASSWORD': 'Telefon, ID, email yoki parol noto\'g\'ri.',
-      'INVALID_PASSWORD': 'Telefon, ID, email yoki parol noto\'g\'ri.',
-      'OVER_FAIL_COUNT':
-          'Kirish urinishlari soni oshib ketdi. Administratorga murojaat qiling.',
-      'LONG_TERM_NO_LOGIN_USER': 'Uzoq vaqt kirish amalga oshirilmagan.',
-      'USER_RESIGNED': 'Bu hisob faol emas.',
-      'PWD_CHANGE_NECESSITY': 'Parolni yangilash zarur.',
-      'PWD_INIT_STATE': 'Parolingiz tiklangan. Yangi parol o\'rnating.',
-      'LOCKED_USER': 'Hisob bloklangan. Administratorga murojaat qiling.',
-    };
-
-    if (codeOrMessage != null && messages.containsKey(codeOrMessage)) {
-      return messages[codeOrMessage]!;
+    if (codeOrMessage == null || codeOrMessage.isEmpty) {
+      return ApiErrorUtils.localize('INVALID_USER_INFO');
     }
-
-    if (codeOrMessage != null &&
-        !_looksLikeKorean(codeOrMessage) &&
-        codeOrMessage.isNotEmpty) {
-      return codeOrMessage;
-    }
-
-    return 'Telefon, ID, email yoki parol noto\'g\'ri.';
-  }
-
-  static bool _looksLikeKorean(String message) {
-    return message.contains('잘못된') ||
-        message.contains('로그인') ||
-        message.contains('계정') ||
-        message.contains('서버 오류');
+    return ApiErrorUtils.localize(codeOrMessage);
   }
 
   static String _normalizeRole(String? rofcCd) {

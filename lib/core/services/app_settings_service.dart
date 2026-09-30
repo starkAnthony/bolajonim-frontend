@@ -5,12 +5,22 @@ class AppSettingsService {
   static const _notificationsKey = 'notifications_enabled';
   static const _privacyKey = 'privacy_mode_enabled';
 
+  /// In-memory copy so API errors can be translated without another prefs read.
+  static String currentLanguageCode = 'uz';
+
+  static Future<void> load() async {
+    currentLanguageCode = await getLanguageCode();
+  }
+
   static Future<String> getLanguageCode() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString(_languageKey) ?? 'uz';
+    final code = prefs.getString(_languageKey) ?? 'uz';
+    currentLanguageCode = code;
+    return code;
   }
 
   static Future<void> setLanguageCode(String code) async {
+    currentLanguageCode = code;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_languageKey, code);
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'core/services/app_settings_service.dart';
 import 'core/services/app_warmup_service.dart';
 import 'core/services/auth_service.dart';
 import 'core/services/session_service.dart';
@@ -10,8 +11,9 @@ import 'features/auth/presentation/start_screen.dart';
 import 'features/navigation/main_navigation_screen.dart';
 import 'features/teacher/presentation/teacher_main_navigation_screen.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await AppSettingsService.load();
   runApp(const BolajonimApp());
 }
 

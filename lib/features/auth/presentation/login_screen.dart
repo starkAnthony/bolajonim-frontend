@@ -6,6 +6,7 @@ import '../../../core/services/session_service.dart';
 import '../../../core/models/country_phone_code.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utils/api_error_utils.dart';
 import '../../../core/utils/phone_utils.dart';
 import '../../../core/widgets/animated_segment_switcher.dart';
 import '../../../core/widgets/international_phone_field.dart';
@@ -190,14 +191,9 @@ class _LoginScreenState extends State<LoginScreen> {
       _handleAuthError(e);
     } catch (e) {
       if (!mounted) return;
-      final message = e.toString();
-      if (message.contains('User not found')) {
-        _showSnack(
-          'Foydalanuvchi topilmadi. Avval ro\'yxatdan o\'ting yoki ma\'lumotlarni tekshiring.',
-        );
-      } else {
-        _showSnack('Xato: $message');
-      }
+      _showSnack(
+        ApiErrorUtils.localize(e.toString().replaceFirst('Exception: ', '')),
+      );
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -215,19 +211,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _handleAuthError(AuthException e) {
-    const messages = {
-      'OVER_FAIL_COUNT':
-          'Kirish urinishlari soni oshib ketdi. Administratorga murojaat qiling.',
-      'INVALID_USER_INFO': 'Telefon, ID, email yoki parol noto\'g\'ri.',
-      'LONG_TERM_NO_LOGIN_USER': 'Uzoq vaqt kirish amalga oshirilmagan.',
-      'USER_RESIGNED': 'Bu hisob faol emas.',
-      'PWD_CHANGE_NECESSITY': 'Parolni yangilash zarur.',
-      'PWD_INIT_STATE': 'Parolingiz tiklangan. Yangi parol o\'rnating.',
-    };
-
-    final displayMessage =
-        (e.type != null ? messages[e.type] : null) ?? e.message;
-    _showSnack(displayMessage);
+    _showSnack(e.message);
   }
 
   @override

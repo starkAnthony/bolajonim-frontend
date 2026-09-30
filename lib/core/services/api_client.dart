@@ -93,9 +93,7 @@ class ApiClient {
     required List<int> fileBytes,
     required String fileName,
   }) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}$path').replace(
-      queryParameters: fields.isEmpty ? null : fields,
-    );
+    final uri = Uri.parse('${ApiConfig.baseUrl}$path');
     final response = await sendMultipart(
       uri: uri,
       headers: await AuthService.authHeaders(),
