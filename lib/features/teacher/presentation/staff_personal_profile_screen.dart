@@ -8,6 +8,9 @@ import '../../../core/services/bolajonim_api.dart';
 import '../../../core/services/teacher_api.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/utils/api_error_utils.dart';
+import '../../../core/widgets/profile_photo_crop_screen.dart';
+import '../../../core/widgets/profile_photo_viewer.dart';
 
 class StaffPersonalProfileScreen extends StatefulWidget {
   final String? userId;
@@ -79,29 +82,99 @@ class _StaffPersonalProfileScreenState extends State<StaffPersonalProfileScreen>
     if (widget.readOnly || _isUploadingPhoto) return;
     final picked = await _picker.pickImage(
       source: ImageSource.gallery,
-      imageQuality: 85,
-      maxWidth: 1200,
+      imageQuality: 90,
+      maxWidth: 2000,
     );
-    if (picked == null) return;
+    if (picked == null || !mounted) return;
     final bytes = await picked.readAsBytes();
+    if (!mounted) return;
+    final cropped = await Navigator.push<Uint8List>(
+      context,
+      MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => ProfilePhotoCropScreen(imageBytes: bytes),
+      ),
+    );
+    if (cropped == null || !mounted) return;
     setState(() {
-      _pickedPhotoBytes = bytes;
+      _pickedPhotoBytes = cropped;
       _isUploadingPhoto = true;
     });
     try {
       await TeacherApi.uploadStaffPhoto(
-        fileBytes: bytes,
-        fileName: picked.name,
+        fileBytes: cropped,
+        fileName: 'staff-photo.png',
       );
       if (!mounted) return;
       _reload();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Rasm saqlanmadi: $e')),
+        SnackBar(content: Text(ApiErrorUtils.localize('$e'))),
       );
     } finally {
       if (mounted) setState(() => _isUploadingPhoto = false);
+    }
+  }
+
+  Future<void> _openPhoto(StaffPersonalProfileModel profile) async {
+    final photoUrl = BolajonimApi.resolveMediaUrl(profile.photoUrl);
+    final hasPhoto = _pickedPhotoBytes != null ||
+        (photoUrl != null && photoUrl.isNotEmpty);
+    if (!hasPhoto) {
+      await _pickPhoto();
+      return;
+    }
+    final action = await Navigator.push<ProfilePhotoAction>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProfilePhotoViewer(
+          title: profile.userName,
+          imageBytes: _pickedPhotoBytes,
+          imageUrl: photoUrl,
+          canEdit: !widget.readOnly,
+        ),
+      ),
+    );
+    if (!mounted || action == null || widget.readOnly) return;
+    if (action == ProfilePhotoAction.change) {
+      await _pickPhoto();
+    } else if (action == ProfilePhotoAction.delete) {
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Rasmni o‘chirish'),
+          content: const Text('Profil rasmi o‘chirilsinmi?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Bekor qilish'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE85D5D),
+                foregroundColor: Colors.white,
+                elevation: 0,
+              ),
+              child: const Text('O‘chirish'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      try {
+        await TeacherApi.deleteStaffPhoto();
+        if (!mounted) return;
+        setState(() => _pickedPhotoBytes = null);
+        _reload();
+      } catch (e) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(ApiErrorUtils.localize('$e'))),
+        );
+      }
     }
   }
 
@@ -205,43 +278,46 @@ class _StaffPersonalProfileScreenState extends State<StaffPersonalProfileScreen>
             padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
             children: [
               Center(
-                child: Stack(
-                  children: [
-                    CircleAvatar(
-                      radius: 48,
-                      backgroundColor: const Color(0xFFEFF8F6),
-                      backgroundImage: _pickedPhotoBytes != null
-                          ? MemoryImage(_pickedPhotoBytes!)
-                          : photoUrl != null
-                              ? NetworkImage(photoUrl)
-                              : null,
-                      child: _pickedPhotoBytes == null && photoUrl == null
-                          ? const Icon(
-                              Icons.person_rounded,
-                              size: 48,
-                              color: AppColors.primary,
-                            )
-                          : null,
-                    ),
-                    if (!widget.readOnly)
-                      Positioned(
-                        right: 0,
-                        bottom: 0,
-                        child: IconButton.filled(
-                          onPressed: _isUploadingPhoto ? null : _pickPhoto,
-                          icon: _isUploadingPhoto
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : const Icon(Icons.camera_alt_rounded, size: 18),
-                        ),
+                child: GestureDetector(
+                  onTap: () => _openPhoto(profile),
+                  child: Stack(
+                    children: [
+                      CircleAvatar(
+                        radius: 64,
+                        backgroundColor: const Color(0xFFEFF8F6),
+                        backgroundImage: _pickedPhotoBytes != null
+                            ? MemoryImage(_pickedPhotoBytes!)
+                            : photoUrl != null
+                                ? NetworkImage(photoUrl)
+                                : null,
+                        child: _pickedPhotoBytes == null && photoUrl == null
+                            ? const Icon(
+                                Icons.person_rounded,
+                                size: 56,
+                                color: AppColors.primary,
+                              )
+                            : null,
                       ),
-                  ],
+                      if (!widget.readOnly)
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: IconButton.filled(
+                            onPressed: _isUploadingPhoto ? null : _pickPhoto,
+                            icon: _isUploadingPhoto
+                                ? const SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : const Icon(Icons.camera_alt_rounded, size: 18),
+                          ),
+                        ),
+                    ],
+                  ),
                 ),
               ),
               const SizedBox(height: 8),

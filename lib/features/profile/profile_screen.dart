@@ -10,6 +10,8 @@ import '../../../core/services/api_client.dart';
 import '../../../core/utils/api_error_utils.dart';
 import '../../../core/theme/app_colors.dart';
 import '../../../core/theme/app_text_styles.dart';
+import '../../../core/widgets/profile_photo_crop_screen.dart';
+import '../../../core/widgets/profile_photo_viewer.dart';
 import '../../../features/auth/presentation/start_screen.dart';
 import '../child/child_setup_screen.dart';
 import 'app_settings_screen.dart';
@@ -36,6 +38,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
   final ImagePicker _picker = ImagePicker();
   Uint8List? _childProfileImageBytes;
   String? _childPhotoUrl;
+  bool _isUploadingPhoto = false;
   late Future<_ProfileData> _profileFuture;
 
   @override
@@ -138,16 +141,21 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _uploadPickedImage(String childNo, Uint8List bytes) async {
+    setState(() => _isUploadingPhoto = true);
     try {
       final updated = await BolajonimApi.uploadChildPhoto(
         childNo: childNo,
         fileBytes: bytes,
+        fileName: 'child-photo.png',
       );
 
       if (!mounted) return;
+      final url = BolajonimApi.resolveMediaUrl(updated.photoUrl);
       setState(() {
-        _childProfileImageBytes = null;
-        _childPhotoUrl = BolajonimApi.resolveMediaUrl(updated.photoUrl);
+        _childProfileImageBytes = bytes;
+        _childPhotoUrl = url == null
+            ? null
+            : '$url?v=${DateTime.now().millisecondsSinceEpoch}';
       });
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -163,6 +171,8 @@ class _ProfileScreenState extends State<ProfileScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(ApiErrorUtils.localize('$e'))),
       );
+    } finally {
+      if (mounted) setState(() => _isUploadingPhoto = false);
     }
   }
 
@@ -171,22 +181,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Future<void> _pickChildImage(ImageSource source) async {
+    if (_isUploadingPhoto) return;
     try {
       final XFile? pickedFile = await _picker.pickImage(
         source: source,
-        imageQuality: 85,
-        maxWidth: 1400,
+        imageQuality: 90,
+        maxWidth: 2000,
       );
 
-      if (pickedFile == null) return;
+      if (pickedFile == null || !mounted) return;
 
       final bytes = await pickedFile.readAsBytes();
-      setState(() => _childProfileImageBytes = bytes);
+      if (!mounted) return;
+      final cropped = await Navigator.push<Uint8List>(
+        context,
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => ProfilePhotoCropScreen(imageBytes: bytes),
+        ),
+      );
+      if (cropped == null || !mounted) return;
 
       final child = _selectedChild((await _profileFuture).children);
-      if (child != null) {
-        await _uploadPickedImage(child.childNo, bytes);
-      }
+      if (child == null) return;
+      await _uploadPickedImage(child.childNo, cropped);
     } catch (e) {
       if (!mounted) return;
 
@@ -216,8 +234,59 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  void _deleteChildImagePrompt(String childNo) {
-    _deleteChildImage(childNo);
+  Future<bool> _confirmDeletePhoto() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text(
+            'Rasmni o‘chirish',
+            style: TextStyle(fontWeight: FontWeight.w700),
+          ),
+          content: const Text('Profil rasmi o‘chirilsinmi?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Bekor qilish'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE85D5D),
+                foregroundColor: Colors.white,
+                elevation: 0,
+              ),
+              child: const Text('O‘chirish'),
+            ),
+          ],
+        );
+      },
+    );
+    return confirmed == true;
+  }
+
+  Future<void> _openChildPhoto(ChildModel child) async {
+    final photoUrl =
+        _childPhotoUrl ?? BolajonimApi.resolveMediaUrl(child.photoUrl);
+    final action = await Navigator.push<ProfilePhotoAction>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ProfilePhotoViewer(
+          title: child.childName,
+          imageBytes: _childProfileImageBytes,
+          imageUrl: photoUrl,
+        ),
+      ),
+    );
+    if (!mounted || action == null) return;
+    if (action == ProfilePhotoAction.change) {
+      _showAddPhotoSheet();
+    } else if (action == ProfilePhotoAction.delete) {
+      if (await _confirmDeletePhoto()) {
+        await _deleteChildImage(child.childNo);
+      }
+    }
   }
 
   bool _hasChildPhoto(ChildModel? child) {
@@ -228,12 +297,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   void _onChildImageTap(ChildModel? child) {
-    if (child == null) return;
+    if (child == null || _isUploadingPhoto) return;
 
     if (!_hasChildPhoto(child)) {
       _showAddPhotoSheet();
     } else {
-      _showEditDeleteSheet(child.childNo);
+      _openChildPhoto(child);
     }
   }
 
@@ -364,86 +433,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                     ),
                   ],
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  width: double.infinity,
-                  child: TextButton(
-                    onPressed: () => Navigator.pop(sheetContext),
-                    child: const Text(
-                      'Bekor qilish',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
-
-  void _showEditDeleteSheet(String childNo) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return Container(
-          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
-          ),
-          child: SafeArea(
-            top: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 44,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade300,
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                ),
-                const SizedBox(height: 18),
-                const Text(
-                  'Profil rasmi',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                const Text(
-                  'Quyidagilardan birini tanlang',
-                  style: AppTextStyles.bodySmall,
-                ),
-                const SizedBox(height: 20),
-                _ActionSheetTile(
-                  icon: Icons.edit_outlined,
-                  title: 'Profil rasmini o‘zgartirish',
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _showAddPhotoSheet();
-                  },
-                ),
-                const SizedBox(height: 10),
-                _ActionSheetTile(
-                  icon: Icons.delete_outline_rounded,
-                  title: 'Profil rasmini o‘chirish',
-                  isDanger: true,
-                  onTap: () {
-                    Navigator.pop(sheetContext);
-                    _deleteChildImagePrompt(childNo);
-                  },
                 ),
                 const SizedBox(height: 14),
                 SizedBox(
@@ -688,11 +677,11 @@ class _MainChildCard extends StatelessWidget {
                   clipBehavior: Clip.none,
                   children: [
                     Container(
-                      width: 78,
-                      height: 78,
+                      width: 104,
+                      height: 104,
                       decoration: BoxDecoration(
                         color: const Color(0xFFEFF8F6),
-                        borderRadius: BorderRadius.circular(24),
+                        borderRadius: BorderRadius.circular(32),
                         image: childProfileImageBytes != null
                             ? DecorationImage(
                                 image: MemoryImage(childProfileImageBytes!),
@@ -709,7 +698,7 @@ class _MainChildCard extends StatelessWidget {
                               (childPhotoUrl == null || childPhotoUrl!.isEmpty)
                           ? const Icon(
                               Icons.child_care_rounded,
-                              size: 38,
+                              size: 46,
                               color: AppColors.primary,
                             )
                           : null,
@@ -718,8 +707,8 @@ class _MainChildCard extends StatelessWidget {
                       right: -4,
                       bottom: -4,
                       child: Container(
-                        width: 28,
-                        height: 28,
+                        width: 32,
+                        height: 32,
                         decoration: BoxDecoration(
                           color: AppColors.primary,
                           shape: BoxShape.circle,
@@ -730,8 +719,8 @@ class _MainChildCard extends StatelessWidget {
                                   (childPhotoUrl == null ||
                                       childPhotoUrl!.isEmpty)
                               ? Icons.add_a_photo_rounded
-                              : Icons.edit_rounded,
-                          size: 14,
+                              : Icons.open_in_full_rounded,
+                          size: 16,
                           color: Colors.white,
                         ),
                       ),
@@ -1180,54 +1169,6 @@ class _PickerOptionCard extends StatelessWidget {
                 color: AppColors.textPrimary,
               ),
             ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ActionSheetTile extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final VoidCallback onTap;
-  final bool isDanger;
-
-  const _ActionSheetTile({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-    this.isDanger = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final color = isDanger ? Colors.red : AppColors.textPrimary;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(18),
-      child: Ink(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF7F9FC),
-          borderRadius: BorderRadius.circular(18),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, color: color),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                title,
-                style: TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.w600,
-                  color: color,
-                ),
-              ),
-            ),
-            Icon(Icons.chevron_right_rounded, color: color),
           ],
         ),
       ),
