@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../config/api_config.dart';
 import '../utils/api_error_utils.dart';
 import 'auth_service.dart';
+import 'multipart_post.dart';
 
 class ApiException implements Exception {
   final String message;
@@ -92,20 +93,17 @@ class ApiClient {
     required List<int> fileBytes,
     required String fileName,
   }) async {
-    final uri = Uri.parse('${ApiConfig.baseUrl}$path');
-    final request = http.MultipartRequest('POST', uri);
-    request.headers.addAll(await AuthService.authHeaders());
-    request.fields.addAll(fields);
-    request.files.add(
-      http.MultipartFile.fromBytes(
-        fileField,
-        fileBytes,
-        filename: fileName,
-      ),
+    final uri = Uri.parse('${ApiConfig.baseUrl}$path').replace(
+      queryParameters: fields.isEmpty ? null : fields,
     );
-
-    final streamed = await request.send().timeout(const Duration(seconds: 30));
-    final response = await http.Response.fromStream(streamed);
+    final response = await sendMultipart(
+      uri: uri,
+      headers: await AuthService.authHeaders(),
+      fields: fields,
+      fileField: fileField,
+      fileBytes: fileBytes,
+      fileName: fileName,
+    );
     return _decodeResponse(response);
   }
 
