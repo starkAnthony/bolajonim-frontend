@@ -1,0 +1,8 @@
+{
+  "name": "bolajonim",
+  "private": true,
+  "description": "Bolajonim kindergarten app (Flutter web).",
+  "scripts": {
+    "build": "bash scripts/build-web.sh"
+  }
+}
